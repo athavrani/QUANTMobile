@@ -1,0 +1,437 @@
+import React from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { BaseStrategyPlugin, StrategyContext, StrategySignalOutput } from '../types';
+import { colors } from '../../theme/colors';
+import { dhanDirectService } from '../../services/dhanDirectService';
+import { niftyOptionFeedService } from '../../services/niftyOptionFeedService';
+import * as Haptics from 'expo-haptics';
+
+export const NiftyOvernightPlugin: BaseStrategyPlugin = {
+  id: 'NIFTY_OVERNIGHT',
+  name: 'NIFTY 09:20 OOBTST (62.5)',
+  tagline: 'Open Opportunity BTST • 1.5x Breakout & 50% SL',
+  icon: '🌙',
+  category: 'INDEX_OPTIONS',
+  executionStyle: 'TIME_TRIGGERED',
+  operatingWindow: {
+    startIST: '09:20:00',
+    endIST: '09:25:00', // D+1 exit
+    isOvernightAllowed: true,
+  },
+  hasZeroTargetInvariant: true,
+
+  evaluate: (ctx: StrategyContext): StrategySignalOutput => {
+    const live = ctx.oobtstLiveState || niftyOptionFeedService.evaluateOobtst(ctx.niftySpot || 23146.15, ctx.istTime);
+
+    const isStep3 = live.currentStep === 3;
+    const isStep2 = live.currentStep === 2;
+
+    const ceSymbol = live.ceLeg.symbol;
+    const peSymbol = live.peLeg.symbol;
+    const ceOpen = live.ceLeg.openPrice;
+    const peOpen = live.peLeg.openPrice;
+    const ceTrigger = live.ceLeg.triggerPrice;
+    const peTrigger = live.peLeg.triggerPrice;
+    const ceLtp = live.ceLeg.currentLtp;
+    const peLtp = live.peLeg.currentLtp;
+
+    const executedSymbol = live.executedSymbol || (live.activeLeg === 'PE' ? peSymbol : ceSymbol);
+    const executedPrice = live.executedPrice || (live.activeLeg === 'PE' ? peTrigger : ceTrigger);
+    const slPrice = live.slPrice || +(executedPrice / 2).toFixed(2);
+    const riskPerLot = live.riskPerLot || +((executedPrice - slPrice) * 25).toFixed(2);
+    const pnlLot = live.pnlPerLot ?? 0;
+
+    let badgeTone: 'purple' | 'bullish' | 'bearish' | 'warning' | 'cyan' = 'cyan';
+    if (live.status === 'ACTIVE') badgeTone = 'purple';
+    else if (live.status === 'BTST_HOLD') badgeTone = 'bullish';
+    else if (live.status === 'SL_HIT') badgeTone = 'bearish';
+    else if (live.status === 'ARMED') badgeTone = 'cyan';
+
+    let headline = `Step 2: 1.5x Breakout Armed (CE: ₹${ceTrigger} • PE: ₹${peTrigger})`;
+    if (isStep3) {
+      headline = `Step 3: Open Opportunity BTST (${executedSymbol} ${live.status}) • SL: ₹${slPrice}`;
+    }
+
+    const primaryMetricLabel = isStep3 ? 'NET OOBTST P&L' : '1.5x BREAKOUT TARGET';
+    const primaryMetricValue = isStep3
+      ? `${pnlLot >= 0 ? `+₹${pnlLot.toFixed(0)}` : `-₹${Math.abs(pnlLot).toFixed(0)}`} / lot`
+      : `CE ₹${ceTrigger} / PE ₹${peTrigger}`;
+
+    return {
+      status: live.status === 'ACTIVE' ? 'ACTIVE' : live.status === 'ARMED' ? 'ARMED' : live.status === 'SL_HIT' ? 'SL_HIT' : 'ACTIVE',
+      statusBadgeText: live.statusBadgeText,
+      badgeTone,
+      headline,
+      primaryMetricLabel,
+      primaryMetricValue,
+      invariantNotice: '🛑 OOBTST INVARIANT: STOP LOSS LOCKED AT 50% OF BUY PRICE • OCO OPPOSITE LEG CANCELLED',
+      lastUpdated: live.lastUpdated || ctx.istTime,
+      stepDetails: {
+        currentStep: live.currentStep,
+        step1: {
+          ceStrike: ceSymbol,
+          ceOpen,
+          peStrike: peSymbol,
+          peOpen,
+          timestamp: live.anchorTime || '09:20:00 IST',
+        },
+        step2: {
+          ceTrigger,
+          ceLtp,
+          peTrigger,
+          peLtp,
+          multiplier: 1.5,
+        },
+        step3: {
+          executedSymbol,
+          executedPrice,
+          slPrice,
+          status: live.status,
+          riskPerLot,
+        },
+      },
+      legs: [
+        {
+          type: 'CE',
+          symbol: ceSymbol,
+          strike: live.ceLeg.strike,
+          refPrice: ceOpen,
+          currentLtp: ceLtp,
+          slPrice: live.activeLeg === 'CE' ? slPrice : undefined,
+          targetPrice: undefined,
+          status: live.ceLeg.status === 'EXECUTED' ? 'ACTIVE' : live.ceLeg.status === 'SL_HIT' ? 'SL_HIT' : live.ceLeg.status === 'DISABLED' ? 'DISABLED' : 'ACTIVE',
+        },
+        {
+          type: 'PE',
+          symbol: peSymbol,
+          strike: live.peLeg.strike,
+          refPrice: peOpen,
+          currentLtp: peLtp,
+          slPrice: live.activeLeg === 'PE' ? slPrice : undefined,
+          targetPrice: undefined,
+          status: live.peLeg.status === 'EXECUTED' ? 'ACTIVE' : live.peLeg.status === 'SL_HIT' ? 'SL_HIT' : live.peLeg.status === 'DISABLED' ? 'DISABLED' : 'ACTIVE',
+        },
+      ],
+    };
+  },
+
+  renderCard: ({ state, onOpenBroker, onViewDetails }) => {
+    const handleCardPress = () => {
+      Haptics.selectionAsync();
+      if (onViewDetails) {
+        onViewDetails('NIFTY_OVERNIGHT');
+      }
+    };
+
+    const currentStep = state.stepDetails?.currentStep ?? 2;
+    const step3 = state.stepDetails?.step3;
+    const step1 = state.stepDetails?.step1;
+    const step2 = state.stepDetails?.step2;
+    const isStep3 = currentStep === 3;
+    const activeSymbol = step3?.executedSymbol || step1?.ceStrike || 'NIFTY 25150 CE';
+
+    return (
+      <TouchableOpacity
+        activeOpacity={0.92}
+        style={styles.card}
+        onPress={handleCardPress}
+      >
+        {/* Top Header */}
+        <View style={styles.header}>
+          <View style={styles.titleRow}>
+            <Text style={styles.icon}>🌙</Text>
+            <View>
+              <Text style={styles.title}>NIFTY 09:20 OOBTST</Text>
+              <Text style={styles.sub}>Open Opportunity BTST (3-Step Engine)</Text>
+            </View>
+          </View>
+          <View style={[styles.badge, { backgroundColor: isStep3 ? colors.purpleGlow : 'rgba(6, 182, 212, 0.15)' }]}>
+            <Text style={[styles.badgeText, { color: isStep3 ? colors.purple : colors.cyan }]}>{state.statusBadgeText}</Text>
+          </View>
+        </View>
+
+        {/* Invariant Alert */}
+        {state.invariantNotice && (
+          <View style={styles.invariantBox}>
+            <Text style={styles.invariantText}>{state.invariantNotice}</Text>
+          </View>
+        )}
+
+        {/* 3-Step Micro Stepper Pill Bar */}
+        <View style={styles.stepperPillBar}>
+          <View style={[styles.stepPill, styles.stepPillDone]}>
+            <Text style={styles.stepPillDoneText}>✓ 1. Open ~62.5</Text>
+          </View>
+          <Text style={styles.pillArrow}>➔</Text>
+          <View style={[styles.stepPill, currentStep >= 2 ? (isStep3 ? styles.stepPillDone : styles.stepPillActive) : styles.stepPillInactive]}>
+            <Text style={currentStep >= 2 ? (isStep3 ? styles.stepPillDoneText : styles.stepPillActiveText) : styles.stepPillInactiveText}>
+              {isStep3 ? '✓ 2. 1.5x Armed' : '⚡ 2. 1.5x Armed'}
+            </Text>
+          </View>
+          <Text style={styles.pillArrow}>➔</Text>
+          <View style={[styles.stepPill, isStep3 ? styles.stepPillActive : styles.stepPillInactive]}>
+            <Text style={isStep3 ? styles.stepPillActiveText : styles.stepPillInactiveText}>
+              {isStep3 ? '🔥 3. OOBTST Active' : '3. OOBTST Active'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Trade Information Card */}
+        {isStep3 ? (
+          <View style={styles.activeTradeContainer}>
+            <View style={styles.tradeTop}>
+              <View>
+                <Text style={styles.tradeTag}>OOBTST EXECUTED LEG</Text>
+                <Text style={styles.tradeSymbol}>{step3?.executedSymbol}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.tradeTag}>HALF-PRICE SL (50%)</Text>
+                <Text style={[styles.tradeSymbol, { color: colors.bearish }]}>
+                  ₹{step3?.slPrice.toFixed(2)}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.metricsRow}>
+              <Text style={styles.metricText}>
+                Buy Level: <Text style={styles.boldText}>₹{step3?.executedPrice.toFixed(2)}</Text>
+              </Text>
+              <Text style={styles.metricText}>
+                Max Risk: <Text style={[styles.boldText, { color: colors.bearish }]}>₹{step3?.riskPerLot.toFixed(0)}</Text>
+              </Text>
+              <Text style={styles.metricText}>
+                P&L: <Text style={[styles.boldText, { color: colors.bullish }]}>{state.primaryMetricValue}</Text>
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.activeTradeContainer}>
+            <View style={styles.tradeTop}>
+              <View>
+                <Text style={styles.tradeTag}>DUAL 1.5x ARMED LEGS</Text>
+                <Text style={styles.tradeSymbol}>{step1?.ceStrike}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.tradeTag}>OPPOSITE ARMED LEG</Text>
+                <Text style={styles.tradeSymbol}>{step1?.peStrike}</Text>
+              </View>
+            </View>
+
+            <View style={styles.metricsRow}>
+              <Text style={styles.metricText}>
+                CE: <Text style={styles.boldText}>₹{step2?.ceLtp.toFixed(1)}</Text> / ₹{step2?.ceTrigger.toFixed(1)}
+              </Text>
+              <Text style={styles.metricText}>
+                PE: <Text style={styles.boldText}>₹{step2?.peLtp.toFixed(1)}</Text> / ₹{step2?.peTrigger.toFixed(1)}
+              </Text>
+              <Text style={styles.metricText}>
+                Status: <Text style={[styles.boldText, { color: colors.cyan }]}>ARMED</Text>
+              </Text>
+            </View>
+          </View>
+        )}
+
+        {/* Deep Dive Action Button */}
+        <TouchableOpacity
+          style={styles.detailBtn}
+          onPress={handleCardPress}
+        >
+          <Text style={styles.detailBtnText}>🔍 View 3-Step Strategy Details ➔</Text>
+        </TouchableOpacity>
+
+        {/* Broker Quick Links */}
+        <View style={styles.footer}>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <TouchableOpacity onPress={() => dhanDirectService.launchDhanApp(activeSymbol)}>
+              <Text style={[styles.brokerLink, { color: colors.bullish }]}>⚡ Open Dhan</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => onOpenBroker(activeSymbol)}>
+              <Text style={styles.brokerLink}>Kite ↗</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.footerNote}>{isStep3 ? 'Hold Overnight • Exit 09:25 D+1' : 'Awaiting 1.5x Trigger'}</Text>
+          <Text style={[styles.footerMetric, { color: isStep3 ? colors.bullish : colors.cyan }]}>{state.primaryMetricValue}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  },
+};
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    padding: 14,
+    marginBottom: 12,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  icon: {
+    fontSize: 20,
+    marginRight: 8,
+  },
+  title: {
+    color: colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  sub: {
+    color: colors.textMuted,
+    fontSize: 11,
+  },
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  invariantBox: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+    borderRadius: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginBottom: 10,
+  },
+  invariantText: {
+    color: colors.bearish,
+    fontSize: 9,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  stepperPillBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surfaceSubtle,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 6,
+    marginBottom: 10,
+  },
+  stepPill: {
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  stepPillDone: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+  },
+  stepPillDoneText: {
+    color: colors.bullish,
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  pillArrow: {
+    color: colors.textMuted,
+    fontSize: 9,
+  },
+  stepPillActive: {
+    backgroundColor: colors.purpleGlow,
+    borderWidth: 1,
+    borderColor: colors.purple,
+  },
+  stepPillActiveText: {
+    color: colors.purple,
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  stepPillInactive: {
+    backgroundColor: 'transparent',
+  },
+  stepPillInactiveText: {
+    color: colors.textMuted,
+    fontSize: 9,
+    fontWeight: '600',
+  },
+  activeTradeContainer: {
+    backgroundColor: colors.surface,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    marginBottom: 10,
+  },
+  tradeTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  tradeTag: {
+    color: colors.textMuted,
+    fontSize: 8,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  tradeSymbol: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 1,
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  metricText: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+  boldText: {
+    color: colors.textPrimary,
+    fontWeight: '700',
+  },
+  detailBtn: {
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.purple,
+    paddingVertical: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  detailBtnText: {
+    color: colors.purple,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+  },
+  brokerLink: {
+    color: colors.cyan,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  footerNote: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+  footerMetric: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+});

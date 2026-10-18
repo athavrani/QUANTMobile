@@ -1,0 +1,390 @@
+import React from 'react';
+import {
+  Modal,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  Linking,
+} from 'react-native';
+import { colors } from '../../theme/colors';
+import { StockRadarItem, TacticalStrikeSuggestion } from '../../types/mobile';
+import * as Haptics from 'expo-haptics';
+
+import { dhanDirectService } from '../../services/dhanDirectService';
+
+interface Props {
+  visible: boolean;
+  stock: StockRadarItem | null;
+  tactical: TacticalStrikeSuggestion | null;
+  onClose: () => void;
+  onViewOptionChain?: (stock: StockRadarItem) => void;
+}
+
+export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewOptionChain }: Props) {
+  if (!stock || !tactical) return null;
+
+  const handleOpenBroker = (action: 'CE' | 'PE', broker: 'kite' | 'dhan' = 'dhan') => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const strike = action === 'CE' ? tactical.recommendedCeStrike : tactical.recommendedPeStrike;
+    const symbol = `${stock.ticker} ${strike} ${action}`;
+
+    if (broker === 'dhan') {
+      dhanDirectService.launchDhanApp(symbol);
+    } else {
+      const kiteUrl = `kite://search?q=${encodeURIComponent(symbol)}`;
+      Linking.canOpenURL(kiteUrl).then((supported) => {
+        if (supported) {
+          Linking.openURL(kiteUrl);
+        } else {
+          Linking.openURL(`https://kite.zerodha.com`);
+        }
+      });
+    }
+  };
+
+  const isCrossed = stock.hasCrossed20D;
+  const isBullish = stock.crossoverDirection === 'BULLISH';
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <View style={styles.modalContent}>
+          {/* Header */}
+          <View style={styles.modalHeader}>
+            <View>
+              <View style={styles.tickerRow}>
+                <Text style={styles.ticker}>{stock.ticker}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: isCrossed ? colors.bullishGlow : colors.warningGlow }]}>
+                  <Text style={[styles.statusText, { color: isCrossed ? colors.bullish : colors.warning }]}>
+                    {isCrossed ? '🔥 20D CROSSED' : '⚡ SCANNING'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.stockName}>{stock.name}</Text>
+            </View>
+
+            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+              <Text style={styles.closeBtnText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.body}>
+            {/* Spot Price & Volume Metrics */}
+            <View style={styles.spotBox}>
+              <View style={styles.spotRow}>
+                <Text style={styles.spotLtp}>₹{stock.spotPrice.toFixed(2)}</Text>
+                <Text style={[styles.spotPercent, { color: stock.percentChange >= 0 ? colors.bullish : colors.bearish }]}>
+                  {stock.percentChange >= 0 ? `+${stock.percentChange}%` : `${stock.percentChange}%`}
+                </Text>
+              </View>
+              <Text style={styles.openText}>Day Open: ₹{stock.dayOpen.toFixed(2)} • Direction: {isBullish ? '▲ Bullish' : '▼ Bearish'}</Text>
+            </View>
+
+            {/* Exact Volume Shares Comparison */}
+            <View style={styles.volumeBox}>
+              <Text style={styles.boxTitle}>20-DAY VOLUME RATIO</Text>
+              <View style={styles.sharesRow}>
+                <Text style={styles.sharesLabel}>Today Traded:</Text>
+                <Text style={styles.sharesVal}>{stock.todayTradedShares.toLocaleString()} shares</Text>
+              </View>
+              <View style={styles.sharesRow}>
+                <Text style={styles.sharesLabel}>20D Avg Baseline:</Text>
+                <Text style={styles.sharesVal}>{stock.avg20DTradedShares.toLocaleString()} shares</Text>
+              </View>
+              <View style={styles.sharesRow}>
+                <Text style={styles.sharesLabel}>Ratio Progress:</Text>
+                <Text style={[styles.sharesVal, { color: isCrossed ? colors.bullish : colors.warning, fontWeight: '700' }]}>
+                  {(stock.volumeRatio * 100).toFixed(1)}% of Benchmark
+                </Text>
+              </View>
+            </View>
+
+            {/* Live Option Chain Quick Inspection Button */}
+            {onViewOptionChain && (
+              <TouchableOpacity
+                style={styles.viewChainBtn}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  onClose();
+                  onViewOptionChain(stock);
+                }}
+              >
+                <Text style={styles.viewChainBtnText}>📊 View Live Option Chain Matrix ({stock.ticker}) ↗</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Tactical Strike Recommendation */}
+            <Text style={styles.sectionHeader}>TACTICAL ATM OPTION REFERENCE</Text>
+
+            {/* Recommended Call Option CE */}
+            <View style={styles.strikeCard}>
+              <View style={styles.strikeHeader}>
+                <Text style={styles.strikeType}>BULLISH ATM CALL (CE)</Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity style={[styles.kiteBtn, { backgroundColor: '#10B981' }]} onPress={() => handleOpenBroker('CE', 'dhan')}>
+                    <Text style={styles.kiteBtnText}>⚡ Dhan</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.kiteBtn} onPress={() => handleOpenBroker('CE', 'kite')}>
+                    <Text style={styles.kiteBtnText}>Kite ↗</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.strikeNumber}>{tactical.recommendedCeStrike} CE</Text>
+              <Text style={styles.estPrem}>Est. Premium: ₹{tactical.estimatedCePremium.toFixed(2)}</Text>
+
+              <View style={styles.levelsRow}>
+                <View style={styles.levelItem}>
+                  <Text style={styles.levelLabel}>INITIAL SL (-20%)</Text>
+                  <Text style={[styles.levelVal, { color: colors.bearish }]}>₹{tactical.ceStopLoss.toFixed(2)}</Text>
+                </View>
+                <View style={styles.levelItem}>
+                  <Text style={styles.levelLabel}>TARGET (+40%)</Text>
+                  <Text style={[styles.levelVal, { color: colors.bullish }]}>₹{tactical.ceTarget1.toFixed(2)}</Text>
+                </View>
+                <View style={styles.levelItem}>
+                  <Text style={styles.levelLabel}>π% MILESTONE</Text>
+                  <Text style={[styles.levelVal, { color: colors.cyan }]}>₹{tactical.cePiTarget1.toFixed(2)}</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Recommended Put Option PE */}
+            <View style={styles.strikeCard}>
+              <View style={styles.strikeHeader}>
+                <Text style={styles.strikeType}>BEARISH ATM PUT (PE)</Text>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity style={[styles.kiteBtn, { backgroundColor: '#10B981' }]} onPress={() => handleOpenBroker('PE', 'dhan')}>
+                    <Text style={styles.kiteBtnText}>⚡ Dhan</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.kiteBtn} onPress={() => handleOpenBroker('PE', 'kite')}>
+                    <Text style={styles.kiteBtnText}>Kite ↗</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.strikeNumber}>{tactical.recommendedPeStrike} PE</Text>
+              <Text style={styles.estPrem}>Est. Premium: ₹{tactical.estimatedPePremium.toFixed(2)}</Text>
+
+              <View style={styles.levelsRow}>
+                <View style={styles.levelItem}>
+                  <Text style={styles.levelLabel}>INITIAL SL (-20%)</Text>
+                  <Text style={[styles.levelVal, { color: colors.bearish }]}>₹{tactical.peStopLoss.toFixed(2)}</Text>
+                </View>
+                <View style={styles.levelItem}>
+                  <Text style={styles.levelLabel}>TARGET (+40%)</Text>
+                  <Text style={[styles.levelVal, { color: colors.bullish }]}>₹{tactical.peTarget1.toFixed(2)}</Text>
+                </View>
+              </View>
+            </View>
+
+            <View style={{ height: 30 }} />
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+const styles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: colors.overlay,
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    maxHeight: '85%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  tickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  ticker: {
+    color: colors.textPrimary,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  statusBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  stockName: {
+    color: colors.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.surfaceHover,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeBtnText: {
+    color: colors.textSecondary,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  body: {
+    padding: 16,
+  },
+  spotBox: {
+    backgroundColor: colors.card,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    marginBottom: 12,
+  },
+  spotRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  spotLtp: {
+    color: colors.textPrimary,
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  spotPercent: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  openText: {
+    color: colors.textMuted,
+    fontSize: 11,
+  },
+  volumeBox: {
+    backgroundColor: colors.surfaceSubtle,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    marginBottom: 16,
+  },
+  boxTitle: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  sharesRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  sharesLabel: {
+    color: colors.textSecondary,
+    fontSize: 12,
+  },
+  sharesVal: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontFamily: 'monospace',
+  },
+  sectionHeader: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  strikeCard: {
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  strikeHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  strikeType: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  kiteBtn: {
+    backgroundColor: colors.surfaceHover,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  kiteBtnText: {
+    color: colors.cyan,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  strikeNumber: {
+    color: colors.textPrimary,
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  estPrem: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginBottom: 8,
+  },
+  levelsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: colors.surface,
+    padding: 8,
+    borderRadius: 6,
+  },
+  levelItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  levelLabel: {
+    color: colors.textMuted,
+    fontSize: 8,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  levelVal: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  viewChainBtn: {
+    backgroundColor: 'rgba(6, 182, 212, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.3)',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  viewChainBtnText: {
+    color: colors.cyan,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+});
