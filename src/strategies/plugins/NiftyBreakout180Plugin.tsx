@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { BaseStrategyPlugin, StrategyContext, StrategySignalOutput } from '../types';
 import { colors } from '../../theme/colors';
+import * as Haptics from 'expo-haptics';
 
 export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
   id: 'NIFTY_BREAKOUT_180',
@@ -99,7 +100,14 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
     };
   },
 
-  renderCard: ({ state, onOpenBroker }) => {
+  renderCard: ({ state, onOpenBroker, onViewDetails }) => {
+    const handleCardPress = () => {
+      Haptics.selectionAsync();
+      if (onViewDetails) {
+        onViewDetails('NIFTY_BREAKOUT_180');
+      }
+    };
+
     const ceLeg = state.legs?.find((l) => l.type === 'CE');
     const peLeg = state.legs?.find((l) => l.type === 'PE');
     const isCeTriggered = ceLeg?.status === 'ACTIVE' && (ceLeg?.currentLtp ?? 0) >= 180;
@@ -111,7 +119,11 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
     const isSlHit = state.status === 'SL_HIT';
 
     return (
-      <View style={styles.card}>
+      <TouchableOpacity
+        activeOpacity={0.92}
+        style={styles.card}
+        onPress={handleCardPress}
+      >
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.titleRow}>
@@ -266,11 +278,21 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
           )}
         </View>
 
+        {/* 3-Step Sub-Page Drilldown Trigger */}
+        <TouchableOpacity
+          activeOpacity={0.8}
+          style={styles.drilldownBar}
+          onPress={handleCardPress}
+        >
+          <Text style={styles.drilldownText}>⚡ View Full 3-Step Strategy &amp; Order Details</Text>
+          <Text style={styles.drilldownArrow}>→</Text>
+        </TouchableOpacity>
+
         {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.footerNote}>Mandatory Exit: 09:45:00 AM IST (Never held past 09:45)</Text>
         </View>
-      </View>
+      </TouchableOpacity>
     );
   },
 };
@@ -534,5 +556,28 @@ const styles = StyleSheet.create({
   footerNote: {
     color: colors.textMuted,
     fontSize: 11,
+  },
+  drilldownBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(6, 182, 212, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  drilldownText: {
+    color: colors.cyan,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  drilldownArrow: {
+    color: colors.cyan,
+    fontSize: 14,
+    fontWeight: '800',
   },
 });

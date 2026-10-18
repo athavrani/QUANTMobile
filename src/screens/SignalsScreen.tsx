@@ -14,6 +14,7 @@ import { strategyRegistry } from '../strategies';
 import { StrategyCategory, StrategyContext } from '../strategies/types';
 import { LiveOptionChainModal } from '../components/options/LiveOptionChainModal';
 import { OobtstDetailModal } from '../components/strategies/OobtstDetailModal';
+import { BreakoutDetailModal } from '../components/strategies/BreakoutDetailModal';
 import { dhanDirectService } from '../services/dhanDirectService';
 import * as Haptics from 'expo-haptics';
 
@@ -34,6 +35,7 @@ export function SignalsScreen() {
   const [categoryFilter, setCategoryFilter] = useState<StrategyCategory | 'ALL'>('ALL');
   const [optionChainVisible, setOptionChainVisible] = useState(false);
   const [oobtstModalVisible, setOobtstModalVisible] = useState(false);
+  const [breakoutModalVisible, setBreakoutModalVisible] = useState(false);
 
   const handleRefresh = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -157,6 +159,8 @@ export function SignalsScreen() {
                 onViewDetails: (strategyId) => {
                   if (strategyId === 'NIFTY_OVERNIGHT') {
                     setOobtstModalVisible(true);
+                  } else if (strategyId === 'NIFTY_BREAKOUT_180') {
+                    setBreakoutModalVisible(true);
                   }
                 },
               })}
@@ -182,6 +186,15 @@ export function SignalsScreen() {
         onClose={() => setOobtstModalVisible(false)}
         istTime={istTime}
         stepDetails={allPlugins.find((p) => p.id === 'NIFTY_OVERNIGHT')?.evaluate(ctx).stepDetails}
+      />
+
+      {/* 3-Step 09:25 ₹180 Breakout Strategy Detail Modal */}
+      <BreakoutDetailModal
+        visible={breakoutModalVisible}
+        onClose={() => setBreakoutModalVisible(false)}
+        istTime={istTime}
+        data={niftyBreakout180}
+        niftySpot={activeSpot}
       />
     </View>
   );

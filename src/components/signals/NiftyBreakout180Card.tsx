@@ -6,9 +6,10 @@ import * as Haptics from 'expo-haptics';
 
 interface Props {
   data: NiftyBreakout180State | null;
+  onPress?: () => void;
 }
 
-export function NiftyBreakout180Card({ data }: Props) {
+export function NiftyBreakout180Card({ data, onPress }: Props) {
   const handleOpenBroker = (symbol: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const kiteUrl = `kite://search?q=${encodeURIComponent(symbol)}`;
@@ -19,6 +20,13 @@ export function NiftyBreakout180Card({ data }: Props) {
         Linking.openURL(`https://kite.zerodha.com`);
       }
     });
+  };
+
+  const handleCardPress = () => {
+    if (onPress) {
+      Haptics.selectionAsync();
+      onPress();
+    }
   };
 
   const currentStep = data?.currentStep || 1;
@@ -34,7 +42,12 @@ export function NiftyBreakout180Card({ data }: Props) {
     : 'NONE';
 
   return (
-    <View style={styles.card}>
+    <TouchableOpacity
+      activeOpacity={onPress ? 0.92 : 1}
+      style={styles.card}
+      onPress={handleCardPress}
+      disabled={!onPress}
+    >
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.titleGroup}>
@@ -196,13 +209,25 @@ export function NiftyBreakout180Card({ data }: Props) {
         )}
       </View>
 
+      {/* Sub-page Navigation Drilldown Bar */}
+      {onPress && (
+        <TouchableOpacity
+          activeOpacity={0.8}
+          style={styles.drilldownBar}
+          onPress={handleCardPress}
+        >
+          <Text style={styles.drilldownText}>⚡ View Full 3-Step Strategy &amp; Order Details</Text>
+          <Text style={styles.drilldownArrow}>→</Text>
+        </TouchableOpacity>
+      )}
+
       {/* Footer */}
       <View style={styles.footer}>
         <Text style={styles.footerText}>
           Mandatory Exit: <Text style={styles.highlight}>09:45:00 AM IST</Text> (Never held past 09:45)
         </Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -469,5 +494,28 @@ const styles = StyleSheet.create({
   highlight: {
     color: colors.textSecondary,
     fontWeight: '600',
+  },
+  drilldownBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(6, 182, 212, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.25)',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  drilldownText: {
+    color: colors.cyan,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  drilldownArrow: {
+    color: colors.cyan,
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
