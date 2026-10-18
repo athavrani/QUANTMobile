@@ -10,11 +10,11 @@
 
 | Metric / Rule | Strategy 1: 20D Volume Crossover | Strategy 2: NIFTY 09:20 Overnight | Strategy 3: NIFTY 180 Breakout |
 | :--- | :--- | :--- | :--- |
-| **Strategy ID** | `20D_CROSSOVER` | `NIFTY_OVERNIGHT` (`NIFTY_0920_PREMIUM_625_OVERNIGHT`) | `NIFTY_BREAKOUT_180` (`NIFTY_0930_180_BREAKOUT`) |
+| **Strategy ID** | `20D_CROSSOVER` | `NIFTY_OVERNIGHT` (`NIFTY_0920_PREMIUM_625_OVERNIGHT`) | `NIFTY_BREAKOUT_180` (`NIFTY_0925_180_BREAKOUT`) |
 | **Asset Class** | NSE Equities & F&O Stocks (55+ Catalog) | NIFTY 50 Index Options (CE + PE) | NIFTY 50 Index Options (CE or PE) |
-| **Contract / Strike** | Equity / Nearest ATM Call (CE) | Closest to ₹62.50 Premium (Range: ₹50–₹75) | Closest to ₹180 Premium @ 09:25 AM |
+| **Contract / Strike** | Equity / Nearest ATM Call (CE) | Closest to ₹62.50 Premium (Range: ₹50–₹75) | Nearest under ₹180 with Open < ₹180 @ 09:25 AM |
 | **Selection Time** | Real-time continuous (09:16–15:30 IST) | Exactly 09:20:00 AM IST | Exactly 09:25:00 AM IST |
-| **Entry Trigger** | Today Traded Shares $\ge$ 20D Avg Traded Shares | Instant dual BUY @ 09:20:00 AM IST | First contract crossing above ₹180 after 09:30 AM |
+| **Entry Trigger** | Today Traded Shares $\ge$ 20D Avg Traded Shares | Instant dual BUY @ 09:20:00 AM IST | First contract crossing above ₹180 (09:25–09:45 AM) |
 | **Price Filter** | LTP $\ge$ Day Open or $\Delta\% \ge 0$ (Bullish BUY) | None (Delta-neutral Strangle/Straddle entry) | Directional breakout (First to break disables opposite) |
 | **Stop Loss (SL)** | Equity: 1% • Option: 20% of Premium | Strict 25% Loss ($\text{Ref Price} \times 0.75$) | Fixed ₹160 Premium (-₹20 / -11.1%) |
 | **Profit Target** | Mathematical $\pi\%$ Targets & +1R/+2R TSL | **STRICTLY ZERO TARGET** (Never exits on profit) | Fixed ₹220 Premium (+₹40 / +22.2%) |
@@ -108,28 +108,28 @@ The **NIFTY 09:20 Premium 62.5 Overnight Strategy** is an overnight index option
 
 ---
 
-## Strategy 3: NIFTY 09:30 ₹180 Breakout Option Buying Strategy
+## Strategy 3: NIFTY 09:25 ₹180 Breakout Option Buying Strategy
 
 ### 3.1 Executive Summary
-The **NIFTY 09:30 ₹180 Breakout Strategy** is a high-speed, directional intraday momentum option buying strategy. It monitors both CE and PE contracts near ₹180 premium and enters the contract that confirms momentum by breaking above ₹180 after 09:30 AM IST.
+The **NIFTY 09:25 ₹180 Breakout Strategy** is a high-speed, directional intraday momentum option buying strategy. At 09:25 AM IST, it identifies candidate CE and PE contracts whose 09:25 AM Open price is strictly less than ₹180, and enters the contract that confirms momentum by breaking above ₹180 between 09:25 AM and 09:45 AM IST.
 
 ### 3.2 Contract Selection Rules (09:25 AM IST)
-1. **Selection Window:** Evaluated at 09:25 AM IST using the current week's NIFTY options expiry.
-2. **Closest to ₹180 Selection:**
-   - From available strikes, independently select one CE contract and one PE contract closest to ₹180 premium:
-     $$\text{distance} = |\text{Price}_{09:25} - 180|$$
+1. **Selection Window:** Evaluated at 09:25:00 AM IST using current week's NIFTY options expiry.
+2. **Strict Open < ₹180 Filter:**
+   - Both CE and PE candidate contracts **must have an open price strictly under ₹180** ($\text{Open}_{09:25} < 180.00$).
+   - Contracts already trading $\ge 180$ at 09:25 AM are eliminated to prevent late entries.
+3. **Nearest Under ₹180 Selection:**
+   - From eligible strikes ($< 180$), independently select the CE and PE contract closest to ₹180 from below (highest premium under 180, typically ₹165–₹179):
+     $$\text{Candidate} = \max(\text{Strike Premium}) \quad \text{subject to } \text{Premium}_{09:25} < 180.00$$
 
-### 3.3 Breakout Trigger Rules (09:30 AM to 09:45 AM IST)
-1. **Pre-09:30 Gate:** Any price surge or crossover above ₹180 before 09:30:00 IST is **strictly ignored**.
-2. **First-Breakout Priority:**
-   - Evaluated on 1-minute candles starting at 09:30:00 IST.
-   - The **first contract** (CE or PE) whose candle crosses above ₹180 triggers a BUY entry.
+### 3.3 Breakout Trigger Rules (09:25 AM to 09:45 AM IST)
+1. **First-Breakout Priority:**
+   - Evaluated on live ticks and 1-minute candles starting at 09:25:00 IST.
+   - The **first contract** (CE or PE) that crosses above ₹180 triggers a BUY entry.
    - **Opposite Leg Cancellation:** The moment one leg triggers, the opposite leg is **permanently disabled** for the day.
-3. **Strict Limit of 1 Trade Per Day:** Only one trade can be executed per calendar day.
-4. **Simultaneous Breakout Conflict:**
-   - If both CE and PE break ₹180 within the exact same 1-minute candle, conflict resolution defaults to `NO_TRADE` (`SIMULTANEOUS_BREAKOUT`) to prevent whipsaws.
-5. **Entry Execution Mode:**
-   - Entry occurs at the opening price of the candle immediately following the trigger candle (`NEXT_CANDLE_OPEN`).
+2. **Strict Limit of 1 Trade Per Day:** Only one trade can be executed per calendar day.
+3. **Entry Execution Mode:**
+   - Entry triggers at the breakout price ($\approx ₹180.00 - ₹182.00$).
 
 ### 3.4 Target, Stop Loss & Time Exit Rules
 - **Fixed Target:** ₹220.00 premium (+₹40.00 / $+22.2\%$ gain per unit).

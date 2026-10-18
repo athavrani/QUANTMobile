@@ -1,5 +1,5 @@
 import React from 'react';
-import { MarketSessionStatus, StockRadarItem } from '../types/mobile';
+import { MarketSessionStatus, StockRadarItem, NiftyBreakout180State } from '../types/mobile';
 
 export type StrategyCategory = 
   | 'INDEX_OPTIONS' 
@@ -50,6 +50,7 @@ export interface StrategyContext {
   niftySpot?: number;
   stocks: StockRadarItem[];
   oobtstLiveState?: OobtstLiveState;
+  breakout180LiveState?: NiftyBreakout180State;
 }
 
 export interface StrategySignalOutput {

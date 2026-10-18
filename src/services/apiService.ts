@@ -233,48 +233,22 @@ export const apiService = {
     };
   },
 
-  // 4. Strategy 3: NIFTY 09:30 ₹180 Breakout
+  // 4. Strategy 3: NIFTY 09:25 ₹180 Breakout
   async fetchNiftyBreakout180State(): Promise<NiftyBreakout180State> {
     try {
       const data = await request<any>(API_CONFIG.ENDPOINTS.NIFTY_BREAKOUT_180);
       if (data && data.state) return data.state;
     } catch {}
 
-    const { expiryStr } = getActiveWeeklyExpiry(new Date(), false);
+    let spot = 23146.15;
+    try {
+      const indexQuote = await dhanDirectService.fetchNiftyIndexQuote();
+      if (indexQuote && indexQuote.ltp > 0) {
+        spot = indexQuote.ltp;
+      }
+    } catch {}
 
-    return {
-      strategyId: 'NIFTY_BREAKOUT_180',
-      tradeDate: new Date().toISOString().split('T')[0],
-      status: 'IN_TRADE',
-      ceCandidate: {
-        type: 'CE',
-        strike: 23150,
-        expiry: expiryStr,
-        price0925: 176.40,
-        distanceTo180: 3.60,
-        currentLtp: 194.20,
-        isTriggered: true,
-        isDisabled: false,
-      },
-      peCandidate: {
-        type: 'PE',
-        strike: 23100,
-        expiry: expiryStr,
-        price0925: 172.10,
-        distanceTo180: 7.90,
-        currentLtp: 145.80,
-        isTriggered: false,
-        isDisabled: true,
-      },
-      activeContract: 'CE',
-      entryPrice: 181.50,
-      entryTime: '09:32:00 AM',
-      fixedTarget: 220.00,
-      fixedStopLoss: 160.00,
-      currentPrice: 194.20,
-      pnlPoints: +12.70,
-      timeRemainingSec: 480,
-    };
+    return niftyOptionFeedService.evaluateBreakout180(spot);
   },
 
   // 5. Tactical Strike Calculation for Strategy 1

@@ -24,6 +24,7 @@ export function SignalsScreen() {
     istTime,
     niftySpot,
     oobtstState,
+    niftyBreakout180,
     signalsTodayCount,
     netPointsCaptured,
     isRefreshing,
@@ -51,6 +52,7 @@ export function SignalsScreen() {
     niftySpot: activeSpot,
     stocks,
     oobtstLiveState: oobtstState || undefined,
+    breakout180LiveState: niftyBreakout180 || undefined,
   };
 
   const allPlugins = strategyRegistry.getAll();

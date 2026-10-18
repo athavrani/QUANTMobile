@@ -311,10 +311,12 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
       if (hasChanged) {
         const nowTime = new Date().toLocaleTimeString('en-IN');
         const liveOobtst = niftyOptionFeedService.evaluateOobtst(newNiftySpot, get().istTime || nowTime);
+        const liveBreakout = niftyOptionFeedService.evaluateBreakout180(newNiftySpot, get().istTime || nowTime);
         set({
           stocks: updatedStocks,
           niftySpot: newNiftySpot,
           oobtstState: liveOobtst,
+          niftyBreakout180: liveBreakout,
           feedStatus: 'ONLINE',
           lastTickTime: nowTime,
         });

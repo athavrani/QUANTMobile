@@ -5,6 +5,7 @@
 // =====================================================================
 
 import { OobtstLiveState, OobtstLegDetail } from '../strategies/types';
+import { NiftyBreakout180State, Candidate180Contract } from '../types/mobile';
 import { dhanDirectService } from './dhanDirectService';
 import { getAdjustedExpiryDate, formatDateKey } from '../constants/nseHolidays';
 
@@ -502,6 +503,238 @@ class NiftyOptionFeedService {
     };
   }
 
+  // Strategy 3: NIFTY 09:25 ₹180 Breakout Engine Cache
+  private cachedBreakout180: {
+    date: string;
+    ceStrike: number;
+    peStrike: number;
+    ceOpen0925: number;
+    peOpen0925: number;
+    expiryStr: string;
+    triggeredSide: 'CE' | 'PE' | null;
+    entryPrice: number | null;
+    entryTime: string | null;
+    peakPrice: number;
+    troughPrice: number;
+  } | null = null;
+
+  /**
+   * Evaluates the 09:25 NIFTY ₹180 Breakout Strategy
+   *
+   * Core Invariants:
+   * 1. 09:25 AM Strike Selection Rule:
+   *    Take nearest Option of Nifty 50 for which 09:25 AM Open price
+   *    for CE and PE is STRICTLY LESS THAN ₹180 (< 180).
+   *    Select the highest premium contract below 180 (closest to 180 from below).
+   * 2. Breakout Trigger:
+   *    Evaluated between 09:25:00 and 09:45:00 IST.
+   *    First contract (CE or PE) crossing above ₹180 confirms direction and triggers BUY.
+   *    The opposite leg is immediately disabled for the day (strictly 1 trade/day).
+   * 3. Target & Stop Loss:
+   *    Fixed Target: ₹220.00 (+40 pts / 1:2 R:R)
+   *    Fixed Stop Loss: ₹160.00 (-20 pts)
+   * 4. Hard Time Exit:
+   *    Mandatory exit at 09:45:00 AM IST if neither Target nor SL has hit.
+   */
+  public evaluateBreakout180(spot: number, istTimeStr?: string): NiftyBreakout180State {
+    const now = new Date();
+    const todayDateKey = formatDateKey(now);
+    const nowTime = istTimeStr || now.toLocaleTimeString('en-IN');
+    const { expiryStr, tYears } = getActiveWeeklyExpiry(now, false);
+
+    // Calculate current minutes from midnight IST to evaluate time gates
+    let istMinutes = 572; // Default ~09:32 AM for offline preview
+    let istSeconds = 0;
+    if (istTimeStr) {
+      const match = istTimeStr.match(/(\d{1,2}):(\d{2}):?(\d{2})?\s*(AM|PM)?/i);
+      if (match) {
+        let hours = parseInt(match[1], 10);
+        const minutes = parseInt(match[2], 10);
+        const seconds = match[3] ? parseInt(match[3], 10) : 0;
+        const meridiem = match[4]?.toUpperCase();
+        if (meridiem === 'PM' && hours < 12) hours += 12;
+        if (meridiem === 'AM' && hours === 12) hours = 0;
+        istMinutes = hours * 60 + minutes;
+        istSeconds = seconds;
+      }
+    } else {
+      const utcHours = now.getUTCHours();
+      const utcMins = now.getUTCMinutes();
+      const istH = (utcHours + 5 + Math.floor((utcMins + 30) / 60)) % 24;
+      const istM = (utcMins + 30) % 60;
+      istMinutes = istH * 60 + istM;
+      istSeconds = now.getUTCSeconds();
+    }
+
+    const totalSeconds = istMinutes * 60 + istSeconds;
+    const gate0925 = 9 * 60 + 25; // 565 mins (09:25 AM)
+    const gate0945 = 9 * 60 + 45; // 585 mins (09:45 AM)
+
+    // STEP 1: Lock or Retrieve Candidate Contracts (< ₹180 at 09:25 AM)
+    if (!this.cachedBreakout180 || this.cachedBreakout180.date !== todayDateKey) {
+      const atm = Math.round(spot / NIFTY_STRIKE_STEP) * NIFTY_STRIKE_STEP;
+
+      // Scan CE strikes from (ATM - 600) to (ATM + 200)
+      // Pick strike with highest premium that is STRICTLY < 180
+      let bestCeStrike = atm;
+      let bestCePrice = 0;
+      for (let k = atm - 600; k <= atm + 200; k += NIFTY_STRIKE_STEP) {
+        const p = calculateBlackScholesPrice(spot, k, tYears, 'CE');
+        if (p < 180.00 && p > bestCePrice) {
+          bestCePrice = p;
+          bestCeStrike = k;
+        }
+      }
+      if (bestCePrice === 0) {
+        bestCeStrike = atm;
+        bestCePrice = 176.40;
+      }
+
+      // Scan PE strikes from (ATM - 200) to (ATM + 600)
+      // Pick strike with highest premium that is STRICTLY < 180
+      let bestPeStrike = atm;
+      let bestPePrice = 0;
+      for (let k = atm - 200; k <= atm + 600; k += NIFTY_STRIKE_STEP) {
+        const p = calculateBlackScholesPrice(spot, k, tYears, 'PE');
+        if (p < 180.00 && p > bestPePrice) {
+          bestPePrice = p;
+          bestPeStrike = k;
+        }
+      }
+      if (bestPePrice === 0) {
+        bestPeStrike = atm;
+        bestPePrice = 172.10;
+      }
+
+      this.cachedBreakout180 = {
+        date: todayDateKey,
+        ceStrike: bestCeStrike,
+        peStrike: bestPeStrike,
+        ceOpen0925: bestCePrice,
+        peOpen0925: bestPePrice,
+        expiryStr,
+        triggeredSide: null,
+        entryPrice: null,
+        entryTime: null,
+        peakPrice: 0,
+        troughPrice: 99999,
+      };
+    }
+
+    const cache = this.cachedBreakout180;
+
+    // Calculate live pricing for candidate legs
+    const currentCeLtp = calculateBlackScholesPrice(spot, cache.ceStrike, tYears, 'CE');
+    const currentPeLtp = calculateBlackScholesPrice(spot, cache.peStrike, tYears, 'PE');
+
+    // STEP 2: Evaluate Breakout Trigger & Time Window
+    let status: NiftyBreakout180State['status'] = 'MONITORING_BREAKOUT';
+    let timeRemainingSec = Math.max(0, gate0945 * 60 - totalSeconds);
+
+    if (istMinutes < gate0925) {
+      status = 'WAITING_0925';
+    } else if (istMinutes >= gate0945) {
+      if (cache.triggeredSide) {
+        status = 'TIME_EXIT';
+      } else {
+        status = 'NO_TRADE_TODAY';
+      }
+      timeRemainingSec = 0;
+    } else {
+      // Between 09:25:00 and 09:45:00
+      if (!cache.triggeredSide) {
+        // Look for first cross above 180
+        if (currentCeLtp >= 180.00 && currentPeLtp < 180.00) {
+          cache.triggeredSide = 'CE';
+          cache.entryPrice = +(Math.max(180.00, currentCeLtp)).toFixed(2);
+          cache.entryTime = nowTime;
+          cache.peakPrice = cache.entryPrice;
+          cache.troughPrice = cache.entryPrice;
+        } else if (currentPeLtp >= 180.00 && currentCeLtp < 180.00) {
+          cache.triggeredSide = 'PE';
+          cache.entryPrice = +(Math.max(180.00, currentPeLtp)).toFixed(2);
+          cache.entryTime = nowTime;
+          cache.peakPrice = cache.entryPrice;
+          cache.troughPrice = cache.entryPrice;
+        } else if (currentCeLtp >= 180.00 && currentPeLtp >= 180.00) {
+          // Tie-break: highest percentage momentum
+          const cePct = (currentCeLtp - cache.ceOpen0925) / cache.ceOpen0925;
+          const pePct = (currentPeLtp - cache.peOpen0925) / cache.peOpen0925;
+          const side = cePct >= pePct ? 'CE' : 'PE';
+          cache.triggeredSide = side;
+          cache.entryPrice = side === 'CE' ? currentCeLtp : currentPeLtp;
+          cache.entryTime = nowTime;
+          cache.peakPrice = cache.entryPrice;
+          cache.troughPrice = cache.entryPrice;
+        } else {
+          status = 'MONITORING_BREAKOUT';
+        }
+      }
+
+      if (cache.triggeredSide) {
+        const activeLtp = cache.triggeredSide === 'CE' ? currentCeLtp : currentPeLtp;
+        if (activeLtp > cache.peakPrice) cache.peakPrice = activeLtp;
+        if (activeLtp < cache.troughPrice) cache.troughPrice = activeLtp;
+
+        if (activeLtp >= 220.00 || cache.peakPrice >= 220.00) {
+          status = 'TARGET_HIT';
+        } else if (activeLtp <= 160.00 || cache.troughPrice <= 160.00) {
+          status = 'SL_HIT';
+        } else {
+          status = 'IN_TRADE';
+        }
+      }
+    }
+
+    const ceCandidate: Candidate180Contract = {
+      type: 'CE',
+      strike: cache.ceStrike,
+      expiry: cache.expiryStr,
+      price0925: cache.ceOpen0925,
+      distanceTo180: +(180.00 - cache.ceOpen0925).toFixed(2),
+      currentLtp: currentCeLtp,
+      isTriggered: cache.triggeredSide === 'CE',
+      isDisabled: cache.triggeredSide === 'PE',
+    };
+
+    const peCandidate: Candidate180Contract = {
+      type: 'PE',
+      strike: cache.peStrike,
+      expiry: cache.expiryStr,
+      price0925: cache.peOpen0925,
+      distanceTo180: +(180.00 - cache.peOpen0925).toFixed(2),
+      currentLtp: currentPeLtp,
+      isTriggered: cache.triggeredSide === 'PE',
+      isDisabled: cache.triggeredSide === 'CE',
+    };
+
+    const currentPrice = cache.triggeredSide === 'CE'
+      ? currentCeLtp
+      : cache.triggeredSide === 'PE'
+      ? currentPeLtp
+      : null;
+
+    const pnlPoints = cache.entryPrice && currentPrice
+      ? +(currentPrice - cache.entryPrice).toFixed(2)
+      : 0;
+
+    return {
+      strategyId: 'NIFTY_BREAKOUT_180',
+      tradeDate: todayDateKey,
+      status,
+      ceCandidate,
+      peCandidate,
+      activeContract: cache.triggeredSide,
+      entryPrice: cache.entryPrice,
+      entryTime: cache.entryTime,
+      fixedTarget: 220.00,
+      fixedStopLoss: 160.00,
+      currentPrice: currentPrice ?? null,
+      pnlPoints,
+      timeRemainingSec,
+    };
+  }
+
   /**
    * Reset Day Anchor (for manual simulation or testing)
    */
@@ -509,6 +742,13 @@ class NiftyOptionFeedService {
     this.cachedAnchor = null;
     this.peakCeLtp = 0;
     this.peakPeLtp = 0;
+  }
+
+  /**
+   * Reset 09:25 Breakout Engine (for manual simulation or testing)
+   */
+  public resetBreakout180() {
+    this.cachedBreakout180 = null;
   }
 }
 

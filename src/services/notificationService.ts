@@ -100,13 +100,13 @@ export const notificationService = {
     } catch {}
   },
 
-  // 4. Alert: 09:30 Breakout Triggered
+  // 4. Alert: 09:25 Breakout Triggered
   async notify180BreakoutTriggered(type: 'CE' | 'PE', strike: number, price: number, target: number, sl: number) {
     try {
       await Notifications.scheduleNotificationAsync({
         content: {
-          title: `🚀 180 BREAKOUT BUY: NIFTY ${strike} ${type}`,
-          body: `Broke ₹180 (Price: ₹${price.toFixed(2)}) | Target: ₹${target} | SL: ₹${sl} | Opposite Disabled | Exit: 09:45`,
+          title: `🚀 09:25 BREAKOUT BUY: NIFTY ${strike} ${type}`,
+          body: `Broke ₹180 (Price: ₹${price.toFixed(2)}, Open < 180) | Target: ₹${target} | SL: ₹${sl} | Opposite Disabled | Exit: 09:45 AM`,
           data: { strategy: 'NIFTY_BREAKOUT_180' },
           sound: true,
         },

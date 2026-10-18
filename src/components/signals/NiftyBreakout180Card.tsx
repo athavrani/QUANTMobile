@@ -32,8 +32,8 @@ export function NiftyBreakout180Card({ data }: Props) {
         <View style={styles.titleGroup}>
           <Text style={styles.icon}>🚀</Text>
           <View>
-            <Text style={styles.title}>NIFTY 09:30 ₹180 Breakout</Text>
-            <Text style={styles.window}>Operating Window: 09:30 – 09:45 IST</Text>
+            <Text style={styles.title}>NIFTY 09:25 ₹180 Breakout</Text>
+            <Text style={styles.window}>Window: 09:25 – 09:45 IST • Open &lt; ₹180 Rule</Text>
           </View>
         </View>
 
@@ -55,19 +55,19 @@ export function NiftyBreakout180Card({ data }: Props) {
           </TouchableOpacity>
         </View>
         <View style={styles.metricItem}>
-          <Text style={styles.metricLabel}>TARGET</Text>
-          <Text style={[styles.metricValue, { color: colors.bullish }]}>₹220.00 (+20%)</Text>
+          <Text style={styles.metricLabel}>TARGET (1:2)</Text>
+          <Text style={[styles.metricValue, { color: colors.bullish }]}>₹220.00 (+40 pts)</Text>
         </View>
         <View style={styles.metricItem}>
           <Text style={styles.metricLabel}>STOP LOSS</Text>
-          <Text style={[styles.metricValue, { color: colors.bearish }]}>₹160.00 (-11%)</Text>
+          <Text style={[styles.metricValue, { color: colors.bearish }]}>₹160.00 (-20 pts)</Text>
         </View>
       </View>
 
       {/* Opposite Leg Disabled Rule Invariant */}
       <View style={styles.oppositeBanner}>
         <Text style={styles.oppositeText}>
-          ⛔ Opposite Leg ({data?.peCandidate?.strike || 23100} PE) disabled upon 1st break. 1 trade/day limit.
+          ⛔ 09:25 Open verified &lt; ₹180. Opposite leg disabled upon 1st break. 1 trade/day limit.
         </Text>
       </View>
 
@@ -76,7 +76,7 @@ export function NiftyBreakout180Card({ data }: Props) {
         {/* CE Candidate */}
         <View style={[styles.candidatePill, data?.activeContract === 'CE' && styles.candidatePillActive]}>
           <Text style={styles.candidateStrike}>{data?.ceCandidate?.strike || 23150} CE</Text>
-          <Text style={styles.candidatePrice}>09:25: ₹{data?.ceCandidate?.price0925.toFixed(2) || '176.40'}</Text>
+          <Text style={styles.candidatePrice}>09:25 Open: ₹{data?.ceCandidate?.price0925.toFixed(2) || '176.40'} (&lt; 180 ✅)</Text>
           <Text style={[styles.candidateStatus, { color: colors.bullish }]}>
             {data?.ceCandidate?.isTriggered ? 'TRIGGERED 🚀' : 'WATCHING'}
           </Text>
@@ -88,7 +88,7 @@ export function NiftyBreakout180Card({ data }: Props) {
             {data?.peCandidate?.strike || 24800} PE
           </Text>
           <Text style={[styles.candidatePrice, data?.peCandidate?.isDisabled && styles.disabledText]}>
-            09:25: ₹{data?.peCandidate?.price0925.toFixed(2) || '172.10'}
+            09:25 Open: ₹{data?.peCandidate?.price0925.toFixed(2) || '172.10'} (&lt; 180 ✅)
           </Text>
           <Text style={[styles.candidateStatus, { color: colors.textMuted }]}>
             {data?.peCandidate?.isDisabled ? 'CANCELED' : 'WATCHING'}
@@ -102,7 +102,7 @@ export function NiftyBreakout180Card({ data }: Props) {
           Mandatory Exit: <Text style={styles.highlight}>09:45:00 AM IST</Text> (Never held past 09:45)
         </Text>
         <Text style={[styles.netPoints, { color: colors.cyan }]}>
-          P&L: +{data?.pnlPoints || '12.70'} pts
+          P&amp;L: {data?.pnlPoints !== undefined && data.pnlPoints >= 0 ? '+' : ''}{data?.pnlPoints || '12.70'} pts
         </Text>
       </View>
     </View>
