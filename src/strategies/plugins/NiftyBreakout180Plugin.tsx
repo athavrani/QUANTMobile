@@ -138,8 +138,15 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
           </View>
         </View>
 
+        {/* Invariant Rule Banner */}
+        <View style={styles.invariantBox}>
+          <Text style={styles.invariantText}>
+            🔒 09:25 Candle Open &lt; ₹180 Rule • CE &amp; PE Locked at 09:25:00 IST
+          </Text>
+        </View>
+
         {/* ============================================================ */}
-        {/* STEP 1: 09:25 CANDLE OPEN SELECTION (< ₹180 RULE)           */}
+        {/* STEP 1: 09:25 CANDLE OPEN SELECTION (< ₹180 RULE & LOCKED)   */}
         {/* ============================================================ */}
         <View style={styles.stepSection}>
           <View style={styles.stepHeaderRow}>
@@ -147,7 +154,7 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
               <Text style={styles.stepNumberText}>STEP 1</Text>
             </View>
             <Text style={styles.stepTitle}>09:25 Candle Open Selection (&lt; ₹180 Rule)</Text>
-            <Text style={styles.stepStatusTag}>🔒 LOCKED</Text>
+            <Text style={styles.stepStatusTag}>🔒 LOCKED STRIKES</Text>
           </View>
 
           <View style={styles.step1Row}>
@@ -165,12 +172,12 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
             </View>
 
             {/* PE Contract Box */}
-            <View style={[styles.contractBox, isPeTriggered && styles.contractBoxActive, peLeg?.status === 'DISABLED' && styles.contractBoxDisabled]}>
+            <View style={[styles.contractBox, isPeTriggered && styles.contractBoxActive]}>
               <View style={styles.contractHeader}>
                 <Text style={[styles.contractType, { color: colors.bearish }]}>PUT (PE)</Text>
                 <Text style={styles.rulePill}>Open &lt; 180 ✅</Text>
               </View>
-              <Text style={[styles.contractStrike, peLeg?.status === 'DISABLED' && styles.strikeThrough]}>
+              <Text style={styles.contractStrike}>
                 {peLeg?.symbol?.replace('NIFTY ', '') || '23100 PE'}
               </Text>
               <Text style={styles.contractPrice}>09:25 Open: ₹{peLeg?.refPrice?.toFixed(2) || '172.10'}</Text>
@@ -181,103 +188,6 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
           </View>
         </View>
 
-        {/* Stepper Connector Arrow */}
-        <View style={styles.stepperArrowBox}>
-          <Text style={styles.stepperArrow}>▼</Text>
-        </View>
-
-        {/* ============================================================ */}
-        {/* STEP 2: ACTIVATION STATUS (> ₹180 BREAKOUT)                  */}
-        {/* ============================================================ */}
-        <View style={styles.stepSection}>
-          <View style={styles.stepHeaderRow}>
-            <View style={[styles.stepNumberBadge, { backgroundColor: isActive ? colors.cyanGlow : colors.cardBorder }]}>
-              <Text style={[styles.stepNumberText, { color: isActive ? colors.cyan : colors.textMuted }]}>STEP 2</Text>
-            </View>
-            <Text style={styles.stepTitle}>Activation Status (&gt; ₹180 Breakout)</Text>
-            <Text style={[styles.stepStatusTag, { color: isActive ? colors.cyan : colors.textMuted }]}>
-              {isActive ? '🚀 ACTIVATED' : '⏳ NOT ACTIVE'}
-            </Text>
-          </View>
-
-          {!isActive ? (
-            <View style={styles.notActiveBox}>
-              <Text style={styles.notActiveText}>⏳ NOT ACTIVE — Neither leg has crossed ₹180 yet</Text>
-              <Text style={styles.notActiveSub}>Monitoring 1-min candles (09:25–09:45 IST). First to break ₹180 confirms direction.</Text>
-            </View>
-          ) : (
-            <View style={styles.activatedBox}>
-              <View style={styles.activeLegRow}>
-                <Text style={styles.activeLegLabel}>ACTIVE CONTRACT:</Text>
-                <TouchableOpacity onPress={() => onOpenBroker(activeLeg?.symbol || 'NIFTY 23150 CE')}>
-                  <Text style={styles.activeLegSymbol}>{activeLeg?.symbol || 'NIFTY 23150 CE'} ↗</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={styles.slTargetGrid}>
-                <View style={styles.slTargetItem}>
-                  <Text style={styles.slTargetLabel}>TARGET (1:2)</Text>
-                  <Text style={[styles.slTargetVal, { color: colors.bullish }]}>{state.target}</Text>
-                </View>
-                <View style={styles.slTargetDivider} />
-                <View style={styles.slTargetItem}>
-                  <Text style={styles.slTargetLabel}>STOP LOSS</Text>
-                  <Text style={[styles.slTargetVal, { color: colors.bearish }]}>{state.stopLoss}</Text>
-                </View>
-              </View>
-
-              <View style={styles.oppositeCanceledNotice}>
-                <Text style={styles.oppositeCanceledText}>
-                  ⛔ Opposite leg ({isCeTriggered ? peLeg?.symbol : ceLeg?.symbol}) is CANCELED / DISABLED for the day.
-                </Text>
-              </View>
-            </View>
-          )}
-        </View>
-
-        {/* Stepper Connector Arrow */}
-        <View style={styles.stepperArrowBox}>
-          <Text style={styles.stepperArrow}>▼</Text>
-        </View>
-
-        {/* ============================================================ */}
-        {/* STEP 3: OUTCOME & TARGET BOOKING                             */}
-        {/* ============================================================ */}
-        <View style={styles.stepSection}>
-          <View style={styles.stepHeaderRow}>
-            <View style={[styles.stepNumberBadge, { backgroundColor: isTargetHit ? colors.bullishGlow : isSlHit ? colors.bearishGlow : colors.cardBorder }]}>
-              <Text style={[styles.stepNumberText, { color: isTargetHit ? colors.bullish : isSlHit ? colors.bearish : colors.textMuted }]}>
-                STEP 3
-              </Text>
-            </View>
-            <Text style={styles.stepTitle}>Outcome &amp; Target Booking</Text>
-          </View>
-
-          {isTargetHit ? (
-            <View style={[styles.outcomeBanner, { backgroundColor: colors.bullishGlow, borderColor: colors.bullish }]}>
-              <Text style={[styles.outcomeTitle, { color: colors.bullish }]}>🎯 TARGET BOOKED (+40 pts)</Text>
-              <Text style={styles.outcomeSub}>Contract reached ₹220.00 Target. 1:2 Reward fully achieved!</Text>
-            </View>
-          ) : isSlHit ? (
-            <View style={[styles.outcomeBanner, { backgroundColor: colors.bearishGlow, borderColor: colors.bearish }]}>
-              <Text style={[styles.outcomeTitle, { color: colors.bearish }]}>🛑 STOP LOSS HIT (-20 pts)</Text>
-              <Text style={styles.outcomeSub}>Contract breached ₹160.00 SL. Position closed to preserve capital.</Text>
-            </View>
-          ) : isActive ? (
-            <View style={[styles.outcomeBanner, { backgroundColor: 'rgba(6, 182, 212, 0.1)', borderColor: colors.cyan }]}>
-              <View style={styles.inTradeRow}>
-                <Text style={[styles.outcomeTitle, { color: colors.cyan }]}>⚡ IN TRADE — Running...</Text>
-                <Text style={[styles.livePnlText, { color: colors.bullish }]}>P&amp;L: +12.7 pts</Text>
-              </View>
-              <Text style={styles.outcomeSub}>LTP: ₹194.20 | Target: ₹220 (+₹25.80 away) | SL: ₹160</Text>
-            </View>
-          ) : (
-            <View style={styles.pendingOutcomeBox}>
-              <Text style={styles.pendingOutcomeText}>⏳ Awaiting Activation in Step 2</Text>
-            </View>
-          )}
-        </View>
-
         {/* 3-Step Sub-Page Drilldown Trigger */}
         <TouchableOpacity
           activeOpacity={0.8}
@@ -285,7 +195,7 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
           onPress={handleCardPress}
         >
           <Text style={styles.drilldownText}>⚡ View Full 3-Step Strategy &amp; Order Details</Text>
-          <Text style={styles.drilldownArrow}>→</Text>
+          <Text style={styles.drilldownArrow}>➔</Text>
         </TouchableOpacity>
 
         {/* Footer */}
@@ -341,6 +251,21 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     fontWeight: '700',
+  },
+  invariantBox: {
+    backgroundColor: 'rgba(6, 182, 212, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.25)',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    marginBottom: 10,
+  },
+  invariantText: {
+    color: colors.cyan,
+    fontSize: 10,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   stepSection: {
     backgroundColor: colors.surfaceSubtle,

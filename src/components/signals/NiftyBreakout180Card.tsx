@@ -65,8 +65,15 @@ export function NiftyBreakout180Card({ data, onPress }: Props) {
         </View>
       </View>
 
+      {/* Invariant Rule Banner */}
+      <View style={styles.invariantBox}>
+        <Text style={styles.invariantText}>
+          🔒 09:25 Candle Open &lt; ₹180 Rule • CE &amp; PE Locked at 09:25:00 IST
+        </Text>
+      </View>
+
       {/* ============================================================ */}
-      {/* STEP 1: 09:25 CANDLE OPEN SELECTION (< ₹180 RULE)           */}
+      {/* STEP 1: 09:25 CANDLE OPEN SELECTION (< ₹180 RULE & LOCKED)   */}
       {/* ============================================================ */}
       <View style={styles.stepSection}>
         <View style={styles.stepHeaderRow}>
@@ -74,7 +81,7 @@ export function NiftyBreakout180Card({ data, onPress }: Props) {
             <Text style={styles.stepNumberText}>STEP 1</Text>
           </View>
           <Text style={styles.stepTitle}>09:25 Candle Open Selection (&lt; ₹180 Rule)</Text>
-          <Text style={styles.stepStatusTag}>🔒 LOCKED</Text>
+          <Text style={styles.stepStatusTag}>🔒 LOCKED STRIKES</Text>
         </View>
 
         <View style={styles.step1Row}>
@@ -92,12 +99,12 @@ export function NiftyBreakout180Card({ data, onPress }: Props) {
           </View>
 
           {/* PE Candidate */}
-          <View style={[styles.contractBox, data?.activeContract === 'PE' && styles.contractBoxActive, data?.peCandidate?.isDisabled && styles.contractBoxDisabled]}>
+          <View style={[styles.contractBox, data?.activeContract === 'PE' && styles.contractBoxActive]}>
             <View style={styles.contractHeader}>
               <Text style={[styles.contractType, { color: colors.bearish }]}>PUT (PE)</Text>
               <Text style={styles.rulePill}>Open &lt; 180 ✅</Text>
             </View>
-            <Text style={[styles.contractStrike, data?.peCandidate?.isDisabled && styles.strikeThrough]}>
+            <Text style={styles.contractStrike}>
               {data?.peCandidate?.strike || 23100} PE
             </Text>
             <Text style={styles.contractPrice}>09:25 Open: ₹{data?.peCandidate?.price0925.toFixed(2) || '172.10'}</Text>
@@ -106,107 +113,6 @@ export function NiftyBreakout180Card({ data, onPress }: Props) {
             </Text>
           </View>
         </View>
-      </View>
-
-      {/* Stepper Connector Arrow */}
-      <View style={styles.stepperArrowBox}>
-        <Text style={styles.stepperArrow}>▼</Text>
-      </View>
-
-      {/* ============================================================ */}
-      {/* STEP 2: ACTIVATION STATUS (> ₹180 BREAKOUT)                  */}
-      {/* ============================================================ */}
-      <View style={styles.stepSection}>
-        <View style={styles.stepHeaderRow}>
-          <View style={[styles.stepNumberBadge, { backgroundColor: isActive ? colors.cyanGlow : colors.cardBorder }]}>
-            <Text style={[styles.stepNumberText, { color: isActive ? colors.cyan : colors.textMuted }]}>STEP 2</Text>
-          </View>
-          <Text style={styles.stepTitle}>Activation Status (&gt; ₹180 Breakout)</Text>
-          <Text style={[styles.stepStatusTag, { color: isActive ? colors.cyan : colors.warning }]}>
-            {isActive ? '🚀 ACTIVATED' : '⏳ NOT ACTIVE'}
-          </Text>
-        </View>
-
-        {!isActive ? (
-          <View style={styles.notActiveBox}>
-            <Text style={styles.notActiveText}>⏳ NOT ACTIVE — Neither leg has crossed ₹180 yet</Text>
-            <Text style={styles.notActiveSub}>Monitoring 1-min candles (09:25–09:45 IST). First to break ₹180 confirms direction.</Text>
-          </View>
-        ) : (
-          <View style={styles.activatedBox}>
-            <View style={styles.activeLegRow}>
-              <Text style={styles.activeLegLabel}>ACTIVE CONTRACT:</Text>
-              <TouchableOpacity onPress={() => handleOpenBroker(`NIFTY ${activeContractStr}`)}>
-                <Text style={styles.activeLegSymbol}>NIFTY {activeContractStr} ↗</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.slTargetGrid}>
-              <View style={styles.slTargetItem}>
-                <Text style={styles.slTargetLabel}>TARGET (1:2)</Text>
-                <Text style={[styles.slTargetVal, { color: colors.bullish }]}>₹220.00 (+40 pts)</Text>
-              </View>
-              <View style={styles.slTargetDivider} />
-              <View style={styles.slTargetItem}>
-                <Text style={styles.slTargetLabel}>STOP LOSS</Text>
-                <Text style={[styles.slTargetVal, { color: colors.bearish }]}>₹160.00 (-20 pts)</Text>
-              </View>
-            </View>
-
-            <View style={styles.oppositeCanceledNotice}>
-              <Text style={styles.oppositeCanceledText}>
-                ⛔ Opposite leg ({data?.activeContract === 'CE' ? `${data?.peCandidate?.strike} PE` : `${data?.ceCandidate?.strike} CE`}) is CANCELED / DISABLED for the day.
-              </Text>
-            </View>
-          </View>
-        )}
-      </View>
-
-      {/* Stepper Connector Arrow */}
-      <View style={styles.stepperArrowBox}>
-        <Text style={styles.stepperArrow}>▼</Text>
-      </View>
-
-      {/* ============================================================ */}
-      {/* STEP 3: OUTCOME & TARGET BOOKING                             */}
-      {/* ============================================================ */}
-      <View style={styles.stepSection}>
-        <View style={styles.stepHeaderRow}>
-          <View style={[styles.stepNumberBadge, { backgroundColor: isTargetHit ? colors.bullishGlow : isSlHit ? colors.bearishGlow : colors.cardBorder }]}>
-            <Text style={[styles.stepNumberText, { color: isTargetHit ? colors.bullish : isSlHit ? colors.bearish : colors.textMuted }]}>
-              STEP 3
-            </Text>
-          </View>
-          <Text style={styles.stepTitle}>Outcome &amp; Target Booking</Text>
-        </View>
-
-        {isTargetHit ? (
-          <View style={[styles.outcomeBanner, { backgroundColor: colors.bullishGlow, borderColor: colors.bullish }]}>
-            <Text style={[styles.outcomeTitle, { color: colors.bullish }]}>🎯 TARGET BOOKED (+40 pts)</Text>
-            <Text style={styles.outcomeSub}>Contract reached ₹220.00 Target. 1:2 Reward fully booked!</Text>
-          </View>
-        ) : isSlHit ? (
-          <View style={[styles.outcomeBanner, { backgroundColor: colors.bearishGlow, borderColor: colors.bearish }]}>
-            <Text style={[styles.outcomeTitle, { color: colors.bearish }]}>🛑 STOP LOSS HIT (-20 pts)</Text>
-            <Text style={styles.outcomeSub}>Contract breached ₹160.00 SL. Position squared off.</Text>
-          </View>
-        ) : isActive ? (
-          <View style={[styles.outcomeBanner, { backgroundColor: 'rgba(6, 182, 212, 0.1)', borderColor: colors.cyan }]}>
-            <View style={styles.inTradeRow}>
-              <Text style={[styles.outcomeTitle, { color: colors.cyan }]}>⚡ IN TRADE — Running...</Text>
-              <Text style={[styles.livePnlText, { color: colors.bullish }]}>
-                P&amp;L: {data?.pnlPoints !== undefined && data.pnlPoints >= 0 ? '+' : ''}{data?.pnlPoints || '12.70'} pts
-              </Text>
-            </View>
-            <Text style={styles.outcomeSub}>
-              Current LTP: ₹{data?.currentPrice?.toFixed(2) || '194.20'} | Target: ₹220.00 | SL: ₹160.00
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.pendingOutcomeBox}>
-            <Text style={styles.pendingOutcomeText}>⏳ Awaiting Activation in Step 2</Text>
-          </View>
-        )}
       </View>
 
       {/* Sub-page Navigation Drilldown Bar */}
@@ -275,6 +181,21 @@ const styles = StyleSheet.create({
   badgeText: {
     fontSize: 11,
     fontWeight: '700',
+  },
+  invariantBox: {
+    backgroundColor: 'rgba(6, 182, 212, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.25)',
+    borderRadius: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    marginBottom: 10,
+  },
+  invariantText: {
+    color: colors.cyan,
+    fontSize: 10,
+    fontWeight: '700',
+    textAlign: 'center',
   },
   stepSection: {
     backgroundColor: colors.surfaceSubtle,
