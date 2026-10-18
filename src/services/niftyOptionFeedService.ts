@@ -718,9 +718,31 @@ class NiftyOptionFeedService {
       ? +(currentPrice - cache.entryPrice).toFixed(2)
       : 0;
 
+    let currentStep: 1 | 2 | 3 = 1;
+    let outcomeText: string | undefined = undefined;
+
+    if (status === 'TARGET_HIT') {
+      currentStep = 3;
+      outcomeText = 'TARGET BOOKED (+40 pts)';
+    } else if (status === 'SL_HIT') {
+      currentStep = 3;
+      outcomeText = 'STOP LOSS HIT (-20 pts)';
+    } else if (status === 'TIME_EXIT') {
+      currentStep = 3;
+      outcomeText = 'SQUARED OFF @ 09:45 AM';
+    } else if (status === 'NO_TRADE_TODAY') {
+      currentStep = 3;
+      outcomeText = 'NO TRADE (NO BREAKOUT)';
+    } else if (status === 'IN_TRADE') {
+      currentStep = 2;
+    } else {
+      currentStep = 1;
+    }
+
     return {
       strategyId: 'NIFTY_BREAKOUT_180',
       tradeDate: todayDateKey,
+      currentStep,
       status,
       ceCandidate,
       peCandidate,
@@ -732,6 +754,7 @@ class NiftyOptionFeedService {
       currentPrice: currentPrice ?? null,
       pnlPoints,
       timeRemainingSec,
+      outcomeText,
     };
   }
 

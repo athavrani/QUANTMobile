@@ -6,7 +6,7 @@ import { colors } from '../../theme/colors';
 export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
   id: 'NIFTY_BREAKOUT_180',
   name: 'NIFTY 09:25 ₹180 Breakout',
-  tagline: '09:25 Candle Open < ₹180 • Directional 1:2 Option Buying',
+  tagline: '09:25 Candle Open < ₹180 • 3-Step Directional Option Buying',
   icon: '🚀',
   category: 'MOMENTUM_BREAKOUT',
   executionStyle: 'CANDLE_BREAKOUT',
@@ -24,34 +24,39 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
     const activeStrike = activeContract === 'CE' ? ce?.strike : pe?.strike;
     const activeSymbol = activeStrike ? `NIFTY ${activeStrike} ${activeContract}` : 'NONE';
     const status = live?.status || 'IN_TRADE';
+    const currentStep = live?.currentStep || (status === 'IN_TRADE' ? 2 : status === 'TARGET_HIT' || status === 'SL_HIT' || status === 'TIME_EXIT' ? 3 : 1);
 
     let badgeTone: StrategySignalOutput['badgeTone'] = 'cyan';
-    let statusBadgeText = 'IN_TRADE 🚀';
+    let statusBadgeText = `STEP ${currentStep}/3`;
     let headline = `${activeSymbol} Crossed ₹180 • Opposite Leg Disabled`;
 
     if (status === 'WAITING_0925') {
       badgeTone = 'purple';
-      statusBadgeText = 'WAITING 09:25 ⏳';
+      statusBadgeText = 'STEP 1: WAITING 09:25';
       headline = 'Selecting CE & PE contracts with 09:25 Open < ₹180';
-    } else if (status === 'MONITORING_BREAKOUT') {
+    } else if (status === 'MONITORING_BREAKOUT' || status === 'CANDIDATES_LOCKED') {
       badgeTone = 'warning';
-      statusBadgeText = 'MONITORING ⚡';
+      statusBadgeText = 'STEP 1: NOT ACTIVE';
       headline = `Watching ${ce?.strike} CE (₹${ce?.price0925.toFixed(1)}) & ${pe?.strike} PE (₹${pe?.price0925.toFixed(1)}) [< ₹180]`;
+    } else if (status === 'IN_TRADE') {
+      badgeTone = 'cyan';
+      statusBadgeText = 'STEP 2: ACTIVE 🚀';
+      headline = `${activeSymbol} Activated > ₹180 • Opposite Leg Canceled`;
     } else if (status === 'TARGET_HIT') {
       badgeTone = 'bullish';
-      statusBadgeText = 'TARGET HIT 🎯';
-      headline = `🎯 ${activeSymbol} hit Target ₹220.00 (+40 pts profit locked)`;
+      statusBadgeText = 'STEP 3: TARGET BOOKED 🎯';
+      headline = `🎯 ${activeSymbol} hit Target ₹220.00 (+40 pts booked)`;
     } else if (status === 'SL_HIT') {
       badgeTone = 'bearish';
-      statusBadgeText = 'SL HIT 🛑';
-      headline = `🛑 ${activeSymbol} hit Stop Loss ₹160.00 (-20 pts risk contained)`;
+      statusBadgeText = 'STEP 3: SL HIT 🛑';
+      headline = `🛑 ${activeSymbol} hit Stop Loss ₹160.00 (-20 pts contained)`;
     } else if (status === 'TIME_EXIT') {
       badgeTone = 'warning';
-      statusBadgeText = 'TIME EXIT ⏱️';
-      headline = `⏱️ 09:45 AM hard exit reached. Position squared off.`;
+      statusBadgeText = 'STEP 3: TIME EXIT ⏱️';
+      headline = `⏱️ 09:45 AM hard exit reached. Position closed.`;
     } else if (status === 'NO_TRADE_TODAY') {
       badgeTone = 'bearish';
-      statusBadgeText = 'NO TRADE ⛔';
+      statusBadgeText = 'STEP 3: NO TRADE ⛔';
       headline = 'Neither contract broke ₹180 before 09:45 AM cutoff.';
     }
 
@@ -67,7 +72,7 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
       primaryMetricValue: '₹220.00 / ₹160.00',
       target: '₹220.00 (+40 pts)',
       stopLoss: '₹160.00 (-20 pts)',
-      invariantNotice: '⛔ Both legs verified Open < ₹180 @ 09:25 AM. 1st break disables opposite. Mandatory exit @ 09:45 AM.',
+      invariantNotice: '⛔ 09:25 Open < ₹180 Rule. 1st break > ₹180 activates trade & disables opposite leg.',
       lastUpdated: ctx.istTime,
       legs: [
         {
@@ -97,16 +102,23 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
   renderCard: ({ state, onOpenBroker }) => {
     const ceLeg = state.legs?.find((l) => l.type === 'CE');
     const peLeg = state.legs?.find((l) => l.type === 'PE');
-    const activeLeg = state.legs?.find((l) => l.status === 'ACTIVE' && l.refPrice && l.currentLtp >= 180) || ceLeg;
+    const isCeTriggered = ceLeg?.status === 'ACTIVE' && (ceLeg?.currentLtp ?? 0) >= 180;
+    const isPeTriggered = peLeg?.status === 'ACTIVE' && (peLeg?.currentLtp ?? 0) >= 180;
+    const isActive = isCeTriggered || isPeTriggered || state.status === 'TRIGGERED' || state.status === 'TARGET_HIT' || state.status === 'SL_HIT';
+    const activeLeg = isCeTriggered ? ceLeg : isPeTriggered ? peLeg : ceLeg;
+
+    const isTargetHit = state.status === 'TARGET_HIT';
+    const isSlHit = state.status === 'SL_HIT';
 
     return (
       <View style={styles.card}>
+        {/* Header */}
         <View style={styles.header}>
           <View style={styles.titleRow}>
             <Text style={styles.icon}>🚀</Text>
             <View>
               <Text style={styles.title}>NIFTY 09:25 ₹180 Breakout</Text>
-              <Text style={styles.sub}>09:25 Open &lt; ₹180 • Operating: 09:25 – 09:45 IST</Text>
+              <Text style={styles.sub}>3-Step Execution • Window: 09:25 – 09:45 IST</Text>
             </View>
           </View>
           <View style={[styles.badge, { backgroundColor: colors.cyanGlow }]}>
@@ -114,61 +126,149 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
           </View>
         </View>
 
-        <View style={styles.metricsBox}>
-          <View style={styles.metricItem}>
-            <Text style={styles.metricLabel}>ACTIVE CONTRACT</Text>
-            <TouchableOpacity onPress={() => onOpenBroker(activeLeg?.symbol || 'NIFTY 23150 CE')}>
-              <Text style={[styles.metricVal, { color: colors.cyan }]}>
-                {activeLeg?.symbol?.replace('NIFTY ', '') || '23150 CE'} ↗
+        {/* ============================================================ */}
+        {/* STEP 1: 09:25 CANDLE OPEN SELECTION (< ₹180 RULE)           */}
+        {/* ============================================================ */}
+        <View style={styles.stepSection}>
+          <View style={styles.stepHeaderRow}>
+            <View style={styles.stepNumberBadge}>
+              <Text style={styles.stepNumberText}>STEP 1</Text>
+            </View>
+            <Text style={styles.stepTitle}>09:25 Candle Open Selection (&lt; ₹180 Rule)</Text>
+            <Text style={styles.stepStatusTag}>🔒 LOCKED</Text>
+          </View>
+
+          <View style={styles.step1Row}>
+            {/* CE Contract Box */}
+            <View style={[styles.contractBox, isCeTriggered && styles.contractBoxActive]}>
+              <View style={styles.contractHeader}>
+                <Text style={styles.contractType}>CALL (CE)</Text>
+                <Text style={styles.rulePill}>Open &lt; 180 ✅</Text>
+              </View>
+              <Text style={styles.contractStrike}>{ceLeg?.symbol?.replace('NIFTY ', '') || '23150 CE'}</Text>
+              <Text style={styles.contractPrice}>09:25 Open: ₹{ceLeg?.refPrice?.toFixed(2) || '176.40'}</Text>
+              <Text style={[styles.contractLtp, { color: (ceLeg?.currentLtp || 0) >= 180 ? colors.bullish : colors.textPrimary }]}>
+                Live LTP: ₹{ceLeg?.currentLtp.toFixed(2) || '176.40'}
               </Text>
-            </TouchableOpacity>
-          </View>
-          <View style={styles.metricItem}>
-            <Text style={styles.metricLabel}>TARGET (1:2)</Text>
-            <Text style={[styles.metricVal, { color: colors.bullish }]}>{state.target}</Text>
-          </View>
-          <View style={styles.metricItem}>
-            <Text style={styles.metricLabel}>STOP LOSS</Text>
-            <Text style={[styles.metricVal, { color: colors.bearish }]}>{state.stopLoss}</Text>
+            </View>
+
+            {/* PE Contract Box */}
+            <View style={[styles.contractBox, isPeTriggered && styles.contractBoxActive, peLeg?.status === 'DISABLED' && styles.contractBoxDisabled]}>
+              <View style={styles.contractHeader}>
+                <Text style={[styles.contractType, { color: colors.bearish }]}>PUT (PE)</Text>
+                <Text style={styles.rulePill}>Open &lt; 180 ✅</Text>
+              </View>
+              <Text style={[styles.contractStrike, peLeg?.status === 'DISABLED' && styles.strikeThrough]}>
+                {peLeg?.symbol?.replace('NIFTY ', '') || '23100 PE'}
+              </Text>
+              <Text style={styles.contractPrice}>09:25 Open: ₹{peLeg?.refPrice?.toFixed(2) || '172.10'}</Text>
+              <Text style={[styles.contractLtp, { color: (peLeg?.currentLtp || 0) >= 180 ? colors.bullish : colors.textPrimary }]}>
+                Live LTP: ₹{peLeg?.currentLtp.toFixed(2) || '172.10'}
+              </Text>
+            </View>
           </View>
         </View>
 
-        {/* Candidate comparison row with < 180 Rule check */}
-        <View style={styles.candidatesRow}>
-          <View style={[styles.candidatePill, ceLeg?.status === 'ACTIVE' && styles.candidateActive]}>
-            <View style={styles.candidateHeader}>
-              <Text style={styles.candidateStrike}>{ceLeg?.symbol?.replace('NIFTY ', '')}</Text>
-              <Text style={styles.ruleBadge}>Open &lt; 180 ✅</Text>
-            </View>
-            <Text style={styles.candidatePrice}>09:25 Open: ₹{ceLeg?.refPrice?.toFixed(2)} | LTP: ₹{ceLeg?.currentLtp.toFixed(2)}</Text>
-            <Text style={[styles.candidateStatus, { color: ceLeg?.status === 'ACTIVE' ? colors.bullish : colors.textMuted }]}>
-              {ceLeg?.status === 'ACTIVE' ? (ceLeg.currentLtp >= 180 ? 'TRIGGERED 🚀' : 'WATCHING') : 'DISABLED'}
-            </Text>
-          </View>
-
-          <View style={[styles.candidatePill, peLeg?.status === 'DISABLED' && styles.candidateDisabled]}>
-            <View style={styles.candidateHeader}>
-              <Text style={[styles.candidateStrike, peLeg?.status === 'DISABLED' && styles.strikeThrough]}>
-                {peLeg?.symbol?.replace('NIFTY ', '')}
-              </Text>
-              <Text style={styles.ruleBadge}>Open &lt; 180 ✅</Text>
-            </View>
-            <Text style={styles.candidatePrice}>09:25 Open: ₹{peLeg?.refPrice?.toFixed(2)} | LTP: ₹{peLeg?.currentLtp.toFixed(2)}</Text>
-            <Text style={[styles.candidateStatus, { color: peLeg?.status === 'ACTIVE' ? colors.bullish : colors.textMuted }]}>
-              {peLeg?.status === 'DISABLED' ? 'CANCELED' : peLeg?.currentLtp && peLeg.currentLtp >= 180 ? 'TRIGGERED 🚀' : 'WATCHING'}
-            </Text>
-          </View>
+        {/* Stepper Connector Arrow */}
+        <View style={styles.stepperArrowBox}>
+          <Text style={styles.stepperArrow}>▼</Text>
         </View>
 
-        {state.invariantNotice && (
-          <View style={styles.noticeBox}>
-            <Text style={styles.noticeText}>{state.invariantNotice}</Text>
+        {/* ============================================================ */}
+        {/* STEP 2: ACTIVATION STATUS (> ₹180 BREAKOUT)                  */}
+        {/* ============================================================ */}
+        <View style={styles.stepSection}>
+          <View style={styles.stepHeaderRow}>
+            <View style={[styles.stepNumberBadge, { backgroundColor: isActive ? colors.cyanGlow : colors.cardBorder }]}>
+              <Text style={[styles.stepNumberText, { color: isActive ? colors.cyan : colors.textMuted }]}>STEP 2</Text>
+            </View>
+            <Text style={styles.stepTitle}>Activation Status (&gt; ₹180 Breakout)</Text>
+            <Text style={[styles.stepStatusTag, { color: isActive ? colors.cyan : colors.textMuted }]}>
+              {isActive ? '🚀 ACTIVATED' : '⏳ NOT ACTIVE'}
+            </Text>
           </View>
-        )}
 
+          {!isActive ? (
+            <View style={styles.notActiveBox}>
+              <Text style={styles.notActiveText}>⏳ NOT ACTIVE — Neither leg has crossed ₹180 yet</Text>
+              <Text style={styles.notActiveSub}>Monitoring 1-min candles (09:25–09:45 IST). First to break ₹180 confirms direction.</Text>
+            </View>
+          ) : (
+            <View style={styles.activatedBox}>
+              <View style={styles.activeLegRow}>
+                <Text style={styles.activeLegLabel}>ACTIVE CONTRACT:</Text>
+                <TouchableOpacity onPress={() => onOpenBroker(activeLeg?.symbol || 'NIFTY 23150 CE')}>
+                  <Text style={styles.activeLegSymbol}>{activeLeg?.symbol || 'NIFTY 23150 CE'} ↗</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.slTargetGrid}>
+                <View style={styles.slTargetItem}>
+                  <Text style={styles.slTargetLabel}>TARGET (1:2)</Text>
+                  <Text style={[styles.slTargetVal, { color: colors.bullish }]}>{state.target}</Text>
+                </View>
+                <View style={styles.slTargetDivider} />
+                <View style={styles.slTargetItem}>
+                  <Text style={styles.slTargetLabel}>STOP LOSS</Text>
+                  <Text style={[styles.slTargetVal, { color: colors.bearish }]}>{state.stopLoss}</Text>
+                </View>
+              </View>
+
+              <View style={styles.oppositeCanceledNotice}>
+                <Text style={styles.oppositeCanceledText}>
+                  ⛔ Opposite leg ({isCeTriggered ? peLeg?.symbol : ceLeg?.symbol}) is CANCELED / DISABLED for the day.
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Stepper Connector Arrow */}
+        <View style={styles.stepperArrowBox}>
+          <Text style={styles.stepperArrow}>▼</Text>
+        </View>
+
+        {/* ============================================================ */}
+        {/* STEP 3: OUTCOME & TARGET BOOKING                             */}
+        {/* ============================================================ */}
+        <View style={styles.stepSection}>
+          <View style={styles.stepHeaderRow}>
+            <View style={[styles.stepNumberBadge, { backgroundColor: isTargetHit ? colors.bullishGlow : isSlHit ? colors.bearishGlow : colors.cardBorder }]}>
+              <Text style={[styles.stepNumberText, { color: isTargetHit ? colors.bullish : isSlHit ? colors.bearish : colors.textMuted }]}>
+                STEP 3
+              </Text>
+            </View>
+            <Text style={styles.stepTitle}>Outcome &amp; Target Booking</Text>
+          </View>
+
+          {isTargetHit ? (
+            <View style={[styles.outcomeBanner, { backgroundColor: colors.bullishGlow, borderColor: colors.bullish }]}>
+              <Text style={[styles.outcomeTitle, { color: colors.bullish }]}>🎯 TARGET BOOKED (+40 pts)</Text>
+              <Text style={styles.outcomeSub}>Contract reached ₹220.00 Target. 1:2 Reward fully achieved!</Text>
+            </View>
+          ) : isSlHit ? (
+            <View style={[styles.outcomeBanner, { backgroundColor: colors.bearishGlow, borderColor: colors.bearish }]}>
+              <Text style={[styles.outcomeTitle, { color: colors.bearish }]}>🛑 STOP LOSS HIT (-20 pts)</Text>
+              <Text style={styles.outcomeSub}>Contract breached ₹160.00 SL. Position closed to preserve capital.</Text>
+            </View>
+          ) : isActive ? (
+            <View style={[styles.outcomeBanner, { backgroundColor: 'rgba(6, 182, 212, 0.1)', borderColor: colors.cyan }]}>
+              <View style={styles.inTradeRow}>
+                <Text style={[styles.outcomeTitle, { color: colors.cyan }]}>⚡ IN TRADE — Running...</Text>
+                <Text style={[styles.livePnlText, { color: colors.bullish }]}>P&amp;L: +12.7 pts</Text>
+              </View>
+              <Text style={styles.outcomeSub}>LTP: ₹194.20 | Target: ₹220 (+₹25.80 away) | SL: ₹160</Text>
+            </View>
+          ) : (
+            <View style={styles.pendingOutcomeBox}>
+              <Text style={styles.pendingOutcomeText}>⏳ Awaiting Activation in Step 2</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Footer */}
         <View style={styles.footer}>
-          <Text style={styles.footerNote}>Mandatory Exit: 09:45:00 AM IST</Text>
-          <Text style={[styles.pnlText, { color: colors.bullish }]}>P&amp;L: +12.7 pts</Text>
+          <Text style={styles.footerNote}>Mandatory Exit: 09:45:00 AM IST (Never held past 09:45)</Text>
         </View>
       </View>
     );
@@ -178,103 +278,88 @@ export const NiftyBreakout180Plugin: BaseStrategyPlugin = {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.cardBorder,
     padding: 14,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+    paddingBottom: 10,
   },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   icon: {
-    fontSize: 20,
+    fontSize: 22,
     marginRight: 8,
   },
   title: {
     color: colors.textPrimary,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
   },
   sub: {
     color: colors.textMuted,
     fontSize: 11,
+    marginTop: 1,
   },
   badge: {
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 4,
     borderRadius: 4,
   },
   badgeText: {
     fontSize: 11,
     fontWeight: '700',
   },
-  metricsBox: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    padding: 10,
-    borderRadius: 6,
+  stepSection: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    marginBottom: 10,
+    padding: 10,
   },
-  metricItem: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  metricLabel: {
-    color: colors.textMuted,
-    fontSize: 10,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  metricVal: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  noticeBox: {
-    backgroundColor: 'rgba(6, 182, 212, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(6, 182, 212, 0.25)',
-    borderRadius: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    marginBottom: 10,
-  },
-  noticeText: {
-    color: colors.cyan,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  footer: {
+  stepHeaderRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.divider,
+    marginBottom: 8,
   },
-  footerNote: {
-    color: colors.textMuted,
-    fontSize: 11,
+  stepNumberBadge: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginRight: 6,
   },
-  pnlText: {
+  stepNumberText: {
+    color: colors.bullish,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  stepTitle: {
+    flex: 1,
+    color: colors.textPrimary,
     fontSize: 12,
     fontWeight: '700',
   },
-  candidatesRow: {
+  stepStatusTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.bullish,
+  },
+  step1Row: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 10,
   },
-  candidatePill: {
+  contractBox: {
     flex: 1,
     backgroundColor: colors.surface,
     padding: 8,
@@ -282,42 +367,172 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.cardBorder,
   },
-  candidateActive: {
+  contractBoxActive: {
     borderColor: colors.cyan,
   },
-  candidateDisabled: {
+  contractBoxDisabled: {
     opacity: 0.5,
   },
-  candidateHeader: {
+  contractHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 4,
   },
-  candidateStrike: {
-    color: colors.textPrimary,
-    fontSize: 13,
+  contractType: {
+    color: colors.bullish,
+    fontSize: 10,
     fontWeight: '700',
   },
-  ruleBadge: {
+  rulePill: {
     color: colors.bullish,
     fontSize: 9,
     fontWeight: '700',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
     paddingHorizontal: 4,
     paddingVertical: 1,
     borderRadius: 3,
   },
-  candidatePrice: {
+  contractStrike: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  contractPrice: {
     color: colors.textSecondary,
     fontSize: 10,
-    marginBottom: 2,
+    marginTop: 1,
   },
-  candidateStatus: {
+  contractLtp: {
     fontSize: 10,
     fontWeight: '700',
+    marginTop: 2,
   },
   strikeThrough: {
     textDecorationLine: 'line-through',
+  },
+  stepperArrowBox: {
+    alignItems: 'center',
+    paddingVertical: 3,
+  },
+  stepperArrow: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+  notActiveBox: {
+    backgroundColor: colors.surface,
+    padding: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  notActiveText: {
+    color: colors.warning,
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  notActiveSub: {
+    color: colors.textMuted,
+    fontSize: 10,
+  },
+  activatedBox: {
+    backgroundColor: colors.surface,
+    padding: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.cyan,
+  },
+  activeLegRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  activeLegLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    marginRight: 6,
+  },
+  activeLegSymbol: {
+    color: colors.cyan,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  slTargetGrid: {
+    flexDirection: 'row',
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: 6,
+    padding: 8,
+    marginBottom: 8,
+  },
+  slTargetItem: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  slTargetDivider: {
+    width: 1,
+    backgroundColor: colors.cardBorder,
+  },
+  slTargetLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  slTargetVal: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  oppositeCanceledNotice: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    borderRadius: 4,
+    padding: 6,
+  },
+  oppositeCanceledText: {
+    color: colors.bearish,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  outcomeBanner: {
+    padding: 10,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  outcomeTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  outcomeSub: {
+    color: colors.textSecondary,
+    fontSize: 11,
+  },
+  inTradeRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  livePnlText: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  pendingOutcomeBox: {
+    padding: 8,
+    alignItems: 'center',
+  },
+  pendingOutcomeText: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  footer: {
+    paddingTop: 8,
+    alignItems: 'center',
+  },
+  footerNote: {
+    color: colors.textMuted,
+    fontSize: 11,
   },
 });

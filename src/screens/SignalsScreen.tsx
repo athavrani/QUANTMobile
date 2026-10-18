@@ -128,7 +128,7 @@ export function SignalsScreen() {
           onPress={() => setCategoryFilter('MOMENTUM_BREAKOUT')}
         >
           <Text style={[styles.chipText, categoryFilter === 'MOMENTUM_BREAKOUT' && styles.chipTextActive]}>
-            🚀 Breakouts
+            🚀 9:25 Breakout
           </Text>
         </TouchableOpacity>
       </View>

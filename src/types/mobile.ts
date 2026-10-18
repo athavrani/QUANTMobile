@@ -77,7 +77,7 @@ export interface NiftyOvernightState {
 }
 
 // ==========================================
-// Strategy 3: NIFTY 09:30 ₹180 Breakout
+// Strategy 3: NIFTY 09:25 ₹180 Breakout (3 Steps)
 // ==========================================
 export interface Candidate180Contract {
   type: 'CE' | 'PE';
@@ -93,13 +93,14 @@ export interface Candidate180Contract {
 export interface NiftyBreakout180State {
   strategyId: 'NIFTY_BREAKOUT_180';
   tradeDate: string;
+  currentStep: 1 | 2 | 3;
   status: 
     | 'WAITING_0925'            // Prior to 09:25:00
-    | 'CANDIDATES_LOCKED'       // 09:25:00 - 09:30:00
-    | 'MONITORING_BREAKOUT'     // 09:30:00 - 09:45:00
-    | 'IN_TRADE'                // 1st leg broke > 180
-    | 'TARGET_HIT'              // ₹220 Hit
-    | 'SL_HIT'                  // ₹160 Hit
+    | 'CANDIDATES_LOCKED'       // 09:25:00 Locked (< 180)
+    | 'MONITORING_BREAKOUT'     // 09:25:00 - 09:45:00
+    | 'IN_TRADE'                // 1st leg broke > 180 (ACTIVE)
+    | 'TARGET_HIT'              // ₹220 Hit (TARGET BOOKED)
+    | 'SL_HIT'                  // ₹160 Hit (STOP LOSS HIT)
     | 'TIME_EXIT'               // 09:45:00 Force Exit
     | 'NO_TRADE_TODAY';
   ceCandidate: Candidate180Contract | null;
@@ -112,6 +113,7 @@ export interface NiftyBreakout180State {
   currentPrice: number | null;
   pnlPoints: number;
   timeRemainingSec: number;
+  outcomeText?: string;
 }
 
 // ==========================================
