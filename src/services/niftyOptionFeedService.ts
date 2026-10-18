@@ -7,7 +7,7 @@
 import { OobtstLiveState, OobtstLegDetail } from '../strategies/types';
 import { NiftyBreakout180State, Candidate180Contract } from '../types/mobile';
 import { dhanDirectService } from './dhanDirectService';
-import { getAdjustedExpiryDate, formatDateKey } from '../constants/nseHolidays';
+import { getAdjustedExpiryDate, formatDateKey, formatDateKeyIST } from '../constants/nseHolidays';
 
 const NIFTY_LOT_SIZE = 25;
 const NIFTY_STRIKE_STEP = 50;
@@ -232,7 +232,7 @@ class NiftyOptionFeedService {
    * Retrieves or initializes the locked 09:20 day anchor
    */
   public getOrCreateDayAnchor(spot: number): OobtstDayAnchor {
-    const today = new Date().toISOString().split('T')[0];
+    const today = formatDateKeyIST();
     const { expiryStr, tYears } = getActiveWeeklyExpiry(new Date(), true);
 
     if (
@@ -538,7 +538,7 @@ class NiftyOptionFeedService {
    */
   public evaluateBreakout180(spot: number, istTimeStr?: string): NiftyBreakout180State {
     const now = new Date();
-    const todayDateKey = formatDateKey(now);
+    const todayDateKey = formatDateKeyIST(now);
     const nowTime = istTimeStr || now.toLocaleTimeString('en-IN');
     const { expiryStr, tYears } = getActiveWeeklyExpiry(now, false);
 

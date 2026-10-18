@@ -71,6 +71,18 @@ export function formatDateKey(date: Date): string {
 }
 
 /**
+ * Formats a Date object to YYYY-MM-DD in Indian Standard Time (IST, UTC+5:30)
+ */
+export function formatDateKeyIST(date: Date = new Date()): string {
+  const istMs = date.getTime() + 5.5 * 60 * 60 * 1000;
+  const istDate = new Date(istMs);
+  const year = istDate.getUTCFullYear();
+  const month = String(istDate.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(istDate.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
  * Checks if a given date is an official NSE trading holiday
  */
 export function isExchangeHoliday(date: Date): { isHoliday: boolean; holidayName?: string } {
