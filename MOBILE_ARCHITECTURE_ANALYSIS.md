@@ -140,14 +140,21 @@ Dynamic Strategy Cards displaying real-time signal conditions:
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│ 🟡 NIFTY 09:30 ₹180 BREAKOUT                                [TRIGGERED 🚀] │
+│ 🚀 NIFTY 09:25 ₹180 BREAKOUT (3 STEPS)              [STEP 2: ACTIVATED 🚀]  │
 │ ─────────────────────────────────────────────────────────────────────────── │
-│ Candidates Locked @ 09:25 AM:                                               │
-│ • CE: 24850 CE ──> Broke ₹180 @ 09:32:00 (Trigger: ₹182.50) [ACTIVE]        │
-│ • PE: 24800 PE ──> DISABLED (Opposite Leg Canceled)                         │
+│ 1️⃣ STEP 1: 09:25 CANDLE OPEN SELECTION (< ₹180 RULE)          [🔒 LOCKED]   │
+│ • CE: 24750 CE @ 09:25 Open: ₹169.30 (< 180 ✅)                             │
+│ • PE: 24950 PE @ 09:25 Open: ₹158.30 (< 180 ✅)                             │
 │ ─────────────────────────────────────────────────────────────────────────── │
-│ Target: ₹220.00 (+₹37.50)  |  Stop Loss: ₹160.00 (-₹22.50)                 │
-│ Time Exit: Forced Close in 08m 12s (@ 09:45:00 AM IST)                      │
+│ 2️⃣ STEP 2: ACTIVATION STATUS (> ₹180 BREAKOUT)                              │
+│ • Status: ACTIVE 🚀 — 24750 CE (Broke ₹180 @ ₹181.50)                       │
+│ • Target (1:2): ₹220.00 (+40 pts)  |  Stop Loss: ₹160.00 (-20 pts)          │
+│ • Opposite Leg: 24950 PE is CANCELED / DISABLED ⛔                          │
+│ ─────────────────────────────────────────────────────────────────────────── │
+│ 3️⃣ STEP 3: OUTCOME & TARGET BOOKING                                         │
+│ • If Target Achieved: 🎯 TARGET BOOKED (+40 pts profit locked @ ₹220.00)    │
+│ • If SL Hit:          🛑 STOP LOSS HIT (-20 pts contained @ ₹160.00)        │
+│ • Running Trade:      ⚡ LTP: ₹194.20 | P&L: +12.7 pts | Exit @ 09:45 AM    │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
