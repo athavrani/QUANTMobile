@@ -9,7 +9,6 @@ import * as SecureStore from 'expo-secure-store';
 import { Linking } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { DHAN_BASE_URL, getDhanSecurityId, DHAN_NIFTY_INDEX_ID, DHAN_SENSEX_INDEX_ID } from '../constants/dhanSecurityMaster';
-import { fetchFreeLiveQuotes } from './freeLiveMarketService';
 import { dhanPlainStorage } from './dhanPlainStorage';
 
 const STORAGE_KEY_CLIENT_ID = 'QM_DHAN_CLIENT_ID';
@@ -379,7 +378,14 @@ class DhanDirectService {
             const open = Number(item.ohlc?.open || item.open || ltp);
             const high = Number(item.ohlc?.high || item.high || ltp);
             const low = Number(item.ohlc?.low || item.low || ltp);
-            const close = Number(item.ohlc?.close || item.close || ltp);
+            let close = Number(item.ohlc?.close || item.close || item.prev_close || item.previous_close || 0);
+            const netChange = Number(item.net_change || item.change || 0);
+            if (close <= 0 && ltp > 0 && netChange !== 0) {
+              close = +(ltp - netChange).toFixed(2);
+            }
+            if (close <= 0) {
+              close = ltp;
+            }
             const volume = Number(item.volume || 0);
 
             quotes[sym] = {
@@ -579,6 +585,9 @@ class DhanDirectService {
 
     // 1. Attempt direct Dhan HQ quote if credentials configured
     if (this.cachedClientId && this.cachedAccessToken) {
+      const niftyId = parseInt(DHAN_NIFTY_INDEX_ID, 10);
+
+      // Try /marketfeed/ohlc
       try {
         const res = await fetch(`${DHAN_BASE_URL}/marketfeed/ohlc`, {
           method: 'POST',
@@ -590,7 +599,7 @@ class DhanDirectService {
             'Accept': 'application/json',
           },
           body: JSON.stringify({
-            IDX_I: [parseInt(DHAN_NIFTY_INDEX_ID, 10)],
+            IDX_I: [niftyId],
           }),
         });
 
@@ -611,22 +620,35 @@ class DhanDirectService {
           }
         }
       } catch {}
-    }
 
-    // 2. Resilient Fallback: Query live exchange feed (^NSEI)
-    try {
-      const freeQuotes = await fetchFreeLiveQuotes(['^NSEI']);
-      const nsei = freeQuotes['^NSEI'] || freeQuotes['NIFTY'];
-      if (nsei && nsei.ltp > 0) {
-        return {
-          ltp: nsei.ltp,
-          open: nsei.open,
-          high: nsei.high,
-          low: nsei.low,
-          close: nsei.close,
-        };
-      }
-    } catch {}
+      // Fallback: Try /marketfeed/ltp
+      try {
+        const resLtp = await fetch(`${DHAN_BASE_URL}/marketfeed/ltp`, {
+          method: 'POST',
+          headers: {
+            'access-token': this.cachedAccessToken,
+            'client-id': this.cachedClientId,
+            'dhanClientId': this.cachedClientId,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          body: JSON.stringify({
+            IDX_I: [niftyId],
+          }),
+        });
+
+        if (resLtp.ok) {
+          const jsonLtp = await resLtp.json();
+          const item = jsonLtp?.data?.IDX_I?.[DHAN_NIFTY_INDEX_ID] || jsonLtp?.IDX_I?.[DHAN_NIFTY_INDEX_ID];
+          if (item) {
+            const ltp = Number(item.last_price || 0);
+            if (ltp > 0) {
+              return { ltp, open: ltp, high: ltp, low: ltp, close: ltp };
+            }
+          }
+        }
+      } catch {}
+    }
 
     return null;
   }
