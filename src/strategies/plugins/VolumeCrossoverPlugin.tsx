@@ -17,8 +17,30 @@ export const VolumeCrossoverPlugin: BaseStrategyPlugin = {
   },
 
   evaluate: (ctx: StrategyContext): StrategySignalOutput => {
-    const crossedStocks = ctx.stocks.filter((s) => s.hasCrossed20D);
-    const nearStocks = ctx.stocks.filter((s) => !s.hasCrossed20D && s.volumeRatio >= 0.8);
+    // Check if market is closed or pre-market before 09:15 AM
+    const isClosed = ctx.marketStatus === 'CLOSED' || ctx.marketStatus === 'PRE_MARKET' || ctx.marketStatus === 'STABILIZING';
+
+    if (isClosed) {
+      const isPreMarket = ctx.marketStatus === 'PRE_MARKET' || ctx.marketStatus === 'STABILIZING';
+      return {
+        status: 'ACTIVE',
+        statusBadgeText: isPreMarket ? 'PRE-MARKET (OPENS 09:15)' : 'MARKET CLOSED',
+        badgeTone: 'warning',
+        headline: isPreMarket
+          ? 'Pre-market session active. Monitoring 55+ F&O stocks for volume accumulation at 09:15 open.'
+          : 'Market closed. Monitoring 55+ F&O stocks for cumulative volume exceeding 20D average on market open (09:15 IST).',
+        primaryMetricLabel: 'CROSSED / NEAR 80%',
+        primaryMetricValue: '0 / 0',
+        target: '1:2 R:R (+40% Option / +2% Spot) & π% Targets',
+        stopLoss: '-20% Option / -1% Spot (TSL BE @ +1R)',
+        invariantNotice: '⚡ Monotonic Latch: Trigger is 1-way per stock. Bullish filter enforces LTP ≥ Day Open & Change ≥ 0%.',
+        lastUpdated: ctx.istTime,
+        legs: undefined,
+      };
+    }
+
+    const crossedStocks = ctx.stocks.filter((s) => s.hasCrossed20D && s.todayTradedShares > 0);
+    const nearStocks = ctx.stocks.filter((s) => !s.hasCrossed20D && s.todayTradedShares > 0 && s.volumeRatio >= 0.8);
     const bullishCrossed = crossedStocks.filter((s) => s.crossoverDirection === 'BULLISH' || (s.spotPrice >= s.dayOpen && s.percentChange >= 0));
 
     const topCrossed = bullishCrossed[0];

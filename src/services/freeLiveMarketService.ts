@@ -4,6 +4,8 @@
 // Ensures live exchange prices are always available
 // =====================================================================
 
+import { formatDateKeyIST } from '../constants/nseHolidays';
+
 export interface FreeLiveQuoteRecord {
   ltp: number;
   volume: number;
@@ -14,6 +16,8 @@ export interface FreeLiveQuoteRecord {
   close: number;
   changePct: number;
   averagePrice: number;
+  quoteDate?: string;
+  isToday?: boolean;
 }
 
 export async function fetchFreeLiveQuotes(
@@ -21,6 +25,7 @@ export async function fetchFreeLiveQuotes(
 ): Promise<Record<string, FreeLiveQuoteRecord>> {
   const quotes: Record<string, FreeLiveQuoteRecord> = {};
   const cleanTickers = Array.from(new Set(tickers.map((t) => t.trim().toUpperCase())));
+  const todayIST = formatDateKeyIST();
 
   const fetchSingleTicker = async (ticker: string): Promise<{ ticker: string; record: FreeLiveQuoteRecord } | null> => {
     const candidates: string[] = [];
@@ -54,25 +59,34 @@ export async function fetchFreeLiveQuotes(
 
         if (!meta) continue;
 
+        const marketTimeSec = Number(meta.regularMarketTime) || 0;
+        const quoteDateIST = marketTimeSec > 0 ? formatDateKeyIST(new Date(marketTimeSec * 1000)) : '';
+        const isToday = quoteDateIST === todayIST;
+
         const ltp = Number(meta.regularMarketPrice) || 0;
         const prevClose = Number(meta.chartPreviousClose) || ltp;
-        const rawVol =
-          Number(meta.regularMarketVolume) ||
-          (Array.isArray(quoteIndicator?.volume) && quoteIndicator.volume[0]) ||
-          0;
+
+        // If quote is from a prior trading session (e.g. weekend or morning before 09:15), today's volume is strictly 0
+        const rawVol = isToday
+          ? (Number(meta.regularMarketVolume) ||
+             (Array.isArray(quoteIndicator?.volume) && quoteIndicator.volume[0]) ||
+             0)
+          : 0;
 
         const volumeM = rawVol / 1_000_000;
-        const dayHigh = Number(meta.regularMarketDayHigh) || ltp;
-        const dayLow = Number(meta.regularMarketDayLow) || ltp;
-        const dayOpen =
-          (Array.isArray(quoteIndicator?.open) && Number(quoteIndicator.open[0])) || ltp;
+        const dayHigh = isToday ? (Number(meta.regularMarketDayHigh) || ltp) : ltp;
+        const dayLow = isToday ? (Number(meta.regularMarketDayLow) || ltp) : ltp;
+        const dayOpen = isToday
+          ? ((Array.isArray(quoteIndicator?.open) && Number(quoteIndicator.open[0])) || ltp)
+          : ltp;
 
-        const changePct =
-          meta.regularMarketChangePercent !== undefined
-            ? +Number(meta.regularMarketChangePercent).toFixed(2)
-            : prevClose > 0
-            ? +(((ltp - prevClose) / prevClose) * 100).toFixed(2)
-            : 0;
+        const changePct = isToday
+          ? (meta.regularMarketChangePercent !== undefined
+              ? +Number(meta.regularMarketChangePercent).toFixed(2)
+              : prevClose > 0
+              ? +(((ltp - prevClose) / prevClose) * 100).toFixed(2)
+              : 0)
+          : 0;
 
         const record: FreeLiveQuoteRecord = {
           ltp: +ltp.toFixed(2),
@@ -84,6 +98,8 @@ export async function fetchFreeLiveQuotes(
           close: +prevClose.toFixed(2),
           changePct,
           averagePrice: +((dayHigh + dayLow + ltp) / 3).toFixed(2),
+          quoteDate: quoteDateIST,
+          isToday,
         };
 
         return { ticker, record };

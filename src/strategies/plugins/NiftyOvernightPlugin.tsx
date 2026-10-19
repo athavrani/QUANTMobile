@@ -21,7 +21,7 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
   hasZeroTargetInvariant: true,
 
   evaluate: (ctx: StrategyContext): StrategySignalOutput => {
-    const live = ctx.oobtstLiveState || niftyOptionFeedService.evaluateOobtst(ctx.niftySpot || 23146.15, ctx.istTime);
+    const live = ctx.oobtstLiveState || niftyOptionFeedService.evaluateOobtst(ctx.niftySpot || 0, ctx.istTime);
 
     const isStep3 = live.currentStep === 3;
     const isStep2 = live.currentStep === 2;
@@ -37,28 +37,44 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
 
     const executedSymbol = live.executedSymbol || (live.activeLeg === 'PE' ? peSymbol : ceSymbol);
     const executedPrice = live.executedPrice || (live.activeLeg === 'PE' ? peTrigger : ceTrigger);
-    const slPrice = live.slPrice || +(executedPrice / 2).toFixed(2);
-    const riskPerLot = live.riskPerLot || +((executedPrice - slPrice) * 25).toFixed(2);
+    const slPrice = live.slPrice || (executedPrice > 0 ? +(executedPrice / 2).toFixed(2) : 0);
+    const riskPerLot = live.riskPerLot || (executedPrice > 0 ? +((executedPrice - slPrice) * 25).toFixed(2) : 0);
     const pnlLot = live.pnlPerLot ?? 0;
 
     let badgeTone: 'purple' | 'bullish' | 'bearish' | 'warning' | 'cyan' = 'cyan';
-    if (live.status === 'ACTIVE') badgeTone = 'purple';
+    if (live.isMarketClosed) badgeTone = 'warning';
+    else if (live.isProvisional) badgeTone = 'cyan';
+    else if (live.status === 'ACTIVE') badgeTone = 'purple';
     else if (live.status === 'BTST_HOLD') badgeTone = 'bullish';
     else if (live.status === 'SL_HIT') badgeTone = 'bearish';
     else if (live.status === 'ARMED') badgeTone = 'cyan';
 
     let headline = `Step 2: 1.5x Breakout Armed (CE: ₹${ceTrigger} • PE: ₹${peTrigger})`;
-    if (isStep3) {
+    let primaryMetricLabel = '1.5x BREAKOUT TARGET';
+    let primaryMetricValue = `CE ₹${ceTrigger} / PE ₹${peTrigger}`;
+
+    if (live.isMarketClosed) {
+      headline = 'Step 1: Market Closed • Opens at 09:15 IST (Strikes Unlocked)';
+      primaryMetricLabel = 'MARKET STATUS';
+      primaryMetricValue = 'OPENS 09:15 IST';
+    } else if (live.isProvisional) {
+      headline = 'Step 1: Provisional Strikes (~₹62.50) • Locks at 09:20:00';
+      primaryMetricLabel = 'PROVISIONAL CANDIDATE';
+      primaryMetricValue = ceOpen > 0 ? `CE ₹${ceOpen.toFixed(1)} / PE ₹${peOpen.toFixed(1)}` : 'UPDATING LIVE';
+    } else if (isStep3) {
       headline = `Step 3: Open Opportunity BTST (${executedSymbol} ${live.status}) • SL: ₹${slPrice}`;
+      primaryMetricLabel = 'NET OOBTST P&L';
+      primaryMetricValue = `${pnlLot >= 0 ? `+₹${pnlLot.toFixed(0)}` : `-₹${Math.abs(pnlLot).toFixed(0)}`} / lot`;
     }
 
-    const primaryMetricLabel = isStep3 ? 'NET OOBTST P&L' : '1.5x BREAKOUT TARGET';
-    const primaryMetricValue = isStep3
-      ? `${pnlLot >= 0 ? `+₹${pnlLot.toFixed(0)}` : `-₹${Math.abs(pnlLot).toFixed(0)}`} / lot`
-      : `CE ₹${ceTrigger} / PE ₹${peTrigger}`;
+    let statusValue: 'IDLE' | 'PREPARING' | 'ARMED' | 'ACTIVE' | 'SL_HIT' = 'ARMED';
+    if (live.isMarketClosed) statusValue = 'IDLE';
+    else if (live.isProvisional) statusValue = 'PREPARING';
+    else if (live.status === 'SL_HIT') statusValue = 'SL_HIT';
+    else if (live.status === 'ACTIVE' || live.status === 'BTST_HOLD') statusValue = 'ACTIVE';
 
     return {
-      status: live.status === 'ACTIVE' ? 'ACTIVE' : live.status === 'ARMED' ? 'ARMED' : live.status === 'SL_HIT' ? 'SL_HIT' : 'ACTIVE',
+      status: statusValue,
       statusBadgeText: live.statusBadgeText,
       badgeTone,
       headline,
@@ -74,6 +90,9 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
           peStrike: peSymbol,
           peOpen,
           timestamp: live.anchorTime || '09:20:00 IST',
+          isLocked: live.isLocked,
+          isProvisional: live.isProvisional,
+          isMarketClosed: live.isMarketClosed,
         },
         step2: {
           ceTrigger,
@@ -123,12 +142,15 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
       }
     };
 
-    const currentStep = state.stepDetails?.currentStep ?? 2;
+    const currentStep = state.stepDetails?.currentStep ?? 1;
     const step3 = state.stepDetails?.step3;
     const step1 = state.stepDetails?.step1;
     const step2 = state.stepDetails?.step2;
+    const isMarketClosed = step1?.isMarketClosed ?? (state.statusBadgeText === 'MARKET_CLOSED');
+    const isProvisional = step1?.isProvisional ?? (state.statusBadgeText === 'PROVISIONAL_STRIKES');
     const isStep3 = currentStep === 3;
-    const activeSymbol = step3?.executedSymbol || step1?.ceStrike || 'NIFTY 25150 CE';
+    const isStep2 = currentStep === 2;
+    const activeSymbol = step3?.executedSymbol || step1?.ceStrike || (state.legs && state.legs[0]?.symbol) || 'NIFTY';
 
     return (
       <TouchableOpacity
@@ -145,8 +167,32 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
               <Text style={styles.sub}>Open Opportunity BTST (3-Step Engine)</Text>
             </View>
           </View>
-          <View style={[styles.badge, { backgroundColor: isStep3 ? colors.purpleGlow : 'rgba(6, 182, 212, 0.15)' }]}>
-            <Text style={[styles.badgeText, { color: isStep3 ? colors.purple : colors.cyan }]}>{state.statusBadgeText}</Text>
+          <View
+            style={[
+              styles.badge,
+              {
+                backgroundColor: isMarketClosed
+                  ? 'rgba(234, 179, 8, 0.15)'
+                  : isStep3
+                  ? colors.purpleGlow
+                  : 'rgba(6, 182, 212, 0.15)',
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.badgeText,
+                {
+                  color: isMarketClosed
+                    ? colors.warning
+                    : isStep3
+                    ? colors.purple
+                    : colors.cyan,
+                },
+              ]}
+            >
+              {state.statusBadgeText}
+            </Text>
           </View>
         </View>
 
@@ -159,13 +205,53 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
 
         {/* 3-Step Micro Stepper Pill Bar */}
         <View style={styles.stepperPillBar}>
-          <View style={[styles.stepPill, styles.stepPillDone]}>
-            <Text style={styles.stepPillDoneText}>✓ 1. Open ~62.5</Text>
+          <View
+            style={[
+              styles.stepPill,
+              step1?.isLocked
+                ? styles.stepPillDone
+                : isProvisional
+                ? styles.stepPillActive
+                : styles.stepPillInactive,
+            ]}
+          >
+            <Text
+              style={
+                step1?.isLocked
+                  ? styles.stepPillDoneText
+                  : isProvisional
+                  ? styles.stepPillActiveText
+                  : styles.stepPillInactiveText
+              }
+            >
+              {step1?.isLocked
+                ? '✓ 1. Open ~62.5'
+                : isProvisional
+                ? '⚡ 1. Prov. ~62.5'
+                : '🕒 1. Market Closed'}
+            </Text>
           </View>
           <Text style={styles.pillArrow}>➔</Text>
-          <View style={[styles.stepPill, currentStep >= 2 ? (isStep3 ? styles.stepPillDone : styles.stepPillActive) : styles.stepPillInactive]}>
-            <Text style={currentStep >= 2 ? (isStep3 ? styles.stepPillDoneText : styles.stepPillActiveText) : styles.stepPillInactiveText}>
-              {isStep3 ? '✓ 2. 1.5x Armed' : '⚡ 2. 1.5x Armed'}
+          <View
+            style={[
+              styles.stepPill,
+              currentStep >= 2
+                ? isStep3
+                  ? styles.stepPillDone
+                  : styles.stepPillActive
+                : styles.stepPillInactive,
+            ]}
+          >
+            <Text
+              style={
+                currentStep >= 2
+                  ? isStep3
+                    ? styles.stepPillDoneText
+                    : styles.stepPillActiveText
+                  : styles.stepPillInactiveText
+              }
+            >
+              {isStep3 ? '✓ 2. 1.5x Armed' : currentStep === 2 ? '⚡ 2. 1.5x Armed' : '2. 1.5x Armed'}
             </Text>
           </View>
           <Text style={styles.pillArrow}>➔</Text>
@@ -204,11 +290,11 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
               </Text>
             </View>
           </View>
-        ) : (
+        ) : isStep2 ? (
           <View style={styles.activeTradeContainer}>
             <View style={styles.tradeTop}>
               <View>
-                <Text style={styles.tradeTag}>DUAL 1.5x ARMED LEGS</Text>
+                <Text style={styles.tradeTag}>DUAL 1.5x ARMED LEGS (LOCKED 09:20)</Text>
                 <Text style={styles.tradeSymbol}>{step1?.ceStrike}</Text>
               </View>
               <View style={{ alignItems: 'flex-end' }}>
@@ -226,6 +312,56 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
               </Text>
               <Text style={styles.metricText}>
                 Status: <Text style={[styles.boldText, { color: colors.cyan }]}>ARMED</Text>
+              </Text>
+            </View>
+          </View>
+        ) : isProvisional ? (
+          <View style={styles.activeTradeContainer}>
+            <View style={styles.tradeTop}>
+              <View>
+                <Text style={[styles.tradeTag, { color: colors.cyan }]}>⚡ PROVISIONAL CE CANDIDATE</Text>
+                <Text style={styles.tradeSymbol}>{step1?.ceStrike || '--'}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={[styles.tradeTag, { color: colors.cyan }]}>⚡ PROVISIONAL PE CANDIDATE</Text>
+                <Text style={styles.tradeSymbol}>{step1?.peStrike || '--'}</Text>
+              </View>
+            </View>
+
+            <View style={styles.metricsRow}>
+              <Text style={styles.metricText}>
+                CE: <Text style={styles.boldText}>{step2?.ceLtp && step2.ceLtp > 0 ? `₹${step2.ceLtp.toFixed(1)}` : '--'}</Text>
+              </Text>
+              <Text style={styles.metricText}>
+                PE: <Text style={styles.boldText}>{step2?.peLtp && step2.peLtp > 0 ? `₹${step2.peLtp.toFixed(1)}` : '--'}</Text>
+              </Text>
+              <Text style={styles.metricText}>
+                Window: <Text style={[styles.boldText, { color: colors.cyan }]}>LOCKS 09:20</Text>
+              </Text>
+            </View>
+          </View>
+        ) : (
+          <View style={styles.activeTradeContainer}>
+            <View style={styles.tradeTop}>
+              <View>
+                <Text style={styles.tradeTag}>NEAREST VALID CANDIDATE CE</Text>
+                <Text style={styles.tradeSymbol}>{step1?.ceStrike || '--'}</Text>
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.tradeTag}>NEAREST VALID CANDIDATE PE</Text>
+                <Text style={styles.tradeSymbol}>{step1?.peStrike || '--'}</Text>
+              </View>
+            </View>
+
+            <View style={styles.metricsRow}>
+              <Text style={styles.metricText}>
+                Market: <Text style={[styles.boldText, { color: colors.warning }]}>CLOSED</Text>
+              </Text>
+              <Text style={styles.metricText}>
+                Strikes: <Text style={styles.boldText}>UNLOCKED</Text>
+              </Text>
+              <Text style={styles.metricText}>
+                Opens: <Text style={[styles.boldText, { color: colors.textPrimary }]}>09:15 IST</Text>
               </Text>
             </View>
           </View>
@@ -249,8 +385,29 @@ export const NiftyOvernightPlugin: BaseStrategyPlugin = {
               <Text style={styles.brokerLink}>Kite ↗</Text>
             </TouchableOpacity>
           </View>
-          <Text style={styles.footerNote}>{isStep3 ? 'Hold Overnight • Exit 09:25 D+1' : 'Awaiting 1.5x Trigger'}</Text>
-          <Text style={[styles.footerMetric, { color: isStep3 ? colors.bullish : colors.cyan }]}>{state.primaryMetricValue}</Text>
+          <Text style={styles.footerNote}>
+            {isStep3
+              ? 'Hold Overnight • Exit 09:25 D+1'
+              : isStep2
+              ? 'Awaiting 1.5x Trigger'
+              : isProvisional
+              ? 'Provisional • Locks @ 09:20'
+              : 'Market Closed • Opens @ 09:15'}
+          </Text>
+          <Text
+            style={[
+              styles.footerMetric,
+              {
+                color: isMarketClosed
+                  ? colors.warning
+                  : isStep3
+                  ? colors.bullish
+                  : colors.cyan,
+              },
+            ]}
+          >
+            {state.primaryMetricValue}
+          </Text>
         </View>
       </TouchableOpacity>
     );

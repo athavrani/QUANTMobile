@@ -75,67 +75,9 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
   oobtstState: null,
   niftyBreakout180: null,
 
-  journal: [
-    {
-      id: 'sig-01',
-      timestamp: '09:20:00 AM',
-      strategyId: 'NIFTY_OVERNIGHT',
-      strategyName: 'NIFTY 09:20 Strangle (62.5)',
-      symbol: 'NIFTY 24900 CE / 24700 PE',
-      signalType: 'BUY',
-      entryPrice: 125.30,
-      outcome: 'OPEN',
-      notes: 'Expiry: 22-OCT. CE @ ₹63.50, PE @ ₹61.80. Zero Target.',
-    },
-    {
-      id: 'sig-02',
-      timestamp: '09:32:00 AM',
-      strategyId: 'NIFTY_BREAKOUT_180',
-      strategyName: 'NIFTY 09:30 Breakout (180)',
-      symbol: 'NIFTY 24850 CE',
-      signalType: 'BUY',
-      entryPrice: 181.50,
-      stopLoss: 160.00,
-      target: 220.00,
-      outcome: 'OPEN',
-      notes: 'Broke ₹180 @ 09:32. Opposite 24800 PE disabled.',
-    },
-    {
-      id: 'sig-03',
-      timestamp: '10:14:20 AM',
-      strategyId: '20D_CROSSOVER',
-      strategyName: '20D Volume Crossover',
-      symbol: 'RELIANCE',
-      signalType: 'BUY',
-      entryPrice: 2942.50,
-      outcome: 'OPEN',
-      notes: '🟢 Crossed 100% of 20D Avg (110.3% Vol). Bullish LTP > Open.',
-    },
-    {
-      id: 'sig-04',
-      timestamp: '10:25:40 AM',
-      strategyId: '20D_CROSSOVER',
-      strategyName: '20D Volume Crossover',
-      symbol: 'TATASTEEL',
-      signalType: 'BUY',
-      entryPrice: 162.80,
-      outcome: 'OPEN',
-      notes: '🟢 Crossed 100% of 20D Avg (107.7% Vol). Bullish LTP > Open.',
-    },
-    {
-      id: 'sig-05',
-      timestamp: '10:42:15 AM',
-      strategyId: '20D_CROSSOVER',
-      strategyName: '20D Volume Crossover',
-      symbol: 'ICICIBANK',
-      signalType: 'SELL',
-      entryPrice: 1248.50,
-      outcome: 'OPEN',
-      notes: '🔴 Crossed 100% of 20D Avg (106.7% Vol). Bearish LTP < Open (Distribution).',
-    },
-  ],
-  signalsTodayCount: 5,
-  netPointsCaptured: +32.40,
+  journal: [],
+  signalsTodayCount: 0,
+  netPointsCaptured: 0,
 
   refreshAll: async (isManual = false) => {
     // Only show pull-to-refresh spinner when user manually pulls down the list
@@ -149,12 +91,26 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
       set({ latchServiceInitialized: true });
     }
 
-    // Day rollover detection: if sessionDate !== today, reset daily caches
+    // Day rollover detection: if sessionDate !== today, reset daily caches & journal
     const todayIST = formatDateKeyIST();
     if (get().sessionDate !== todayIST) {
       niftyOptionFeedService.resetAnchor();
       niftyOptionFeedService.resetBreakout180();
-      set({ sessionDate: todayIST });
+      set({
+        sessionDate: todayIST,
+        journal: [],
+        signalsTodayCount: 0,
+        netPointsCaptured: 0,
+        stocks: get().stocks.map((s) => ({
+          ...s,
+          todayTradedShares: 0,
+          volumeRatio: 0,
+          hasCrossed20D: false,
+          crossoverTime: undefined,
+          crossoverDirection: 'BULLISH',
+          circleIndicator: 'GREY',
+        })),
+      });
     }
 
     try {
@@ -171,59 +127,61 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
       const newJournalEntries: SignalJournalItem[] = [];
 
       for (const stock of stocks) {
-        if (stock.circleIndicator === 'GREEN') {
-          const isLocked = alertLatchService.isAlertLatched(stock.ticker, 'GREEN');
-          if (!isLocked) {
-            const acquired = await alertLatchService.acquireAlertLatch(stock.ticker, 'GREEN', {
-              spotPrice: stock.spotPrice,
-              todayTradedShares: stock.todayTradedShares,
-              avg20DTradedShares: stock.avg20DTradedShares,
-              volumeRatio: stock.volumeRatio,
-              crossoverTime: stock.crossoverTime,
-            });
-            if (acquired) {
-              const tactical = apiService.calculateTacticalStrike(stock);
-              notificationService.notify20DCrossover(
-                stock.ticker,
-                stock.volumeRatio,
-                stock.spotPrice,
-                tactical.recommendedCeStrike
-              );
-              newJournalEntries.push({
-                id: `sig-${stock.ticker}-${Date.now()}`,
-                timestamp: session.istTime || new Date().toLocaleTimeString('en-IN'),
-                strategyId: '20D_CROSSOVER',
-                strategyName: '20D Volume Crossover',
-                symbol: stock.ticker,
-                signalType: 'BUY',
-                entryPrice: stock.spotPrice,
-                outcome: 'OPEN',
-                notes: `🟢 Crossed 100% of 20D Avg (${(stock.volumeRatio * 100).toFixed(1)}% Vol). Bullish LTP > Open. Tactical: ${tactical.recommendedCeStrike} CE.`,
+        if (stock.hasCrossed20D && stock.todayTradedShares > 0) {
+          if (stock.circleIndicator === 'GREEN') {
+            const isLocked = alertLatchService.isAlertLatched(stock.ticker, 'GREEN');
+            if (!isLocked) {
+              const acquired = await alertLatchService.acquireAlertLatch(stock.ticker, 'GREEN', {
+                spotPrice: stock.spotPrice,
+                todayTradedShares: stock.todayTradedShares,
+                avg20DTradedShares: stock.avg20DTradedShares,
+                volumeRatio: stock.volumeRatio,
+                crossoverTime: stock.crossoverTime,
               });
+              if (acquired) {
+                const tactical = apiService.calculateTacticalStrike(stock);
+                notificationService.notify20DCrossover(
+                  stock.ticker,
+                  stock.volumeRatio,
+                  stock.spotPrice,
+                  tactical.recommendedCeStrike
+                );
+                newJournalEntries.push({
+                  id: `sig-${stock.ticker}-${Date.now()}`,
+                  timestamp: session.istTime || new Date().toLocaleTimeString('en-IN'),
+                  strategyId: '20D_CROSSOVER',
+                  strategyName: '20D Volume Crossover',
+                  symbol: stock.ticker,
+                  signalType: 'BUY',
+                  entryPrice: stock.spotPrice,
+                  outcome: 'OPEN',
+                  notes: `🟢 Crossed 100% of 20D Avg (${(stock.volumeRatio * 100).toFixed(1)}% Vol). Bullish LTP > Open. Tactical: ${tactical.recommendedCeStrike} CE.`,
+                });
+              }
             }
-          }
-        } else if (stock.circleIndicator === 'RED') {
-          const isLocked = alertLatchService.isAlertLatched(stock.ticker, 'RED');
-          if (!isLocked) {
-            const acquired = await alertLatchService.acquireAlertLatch(stock.ticker, 'RED', {
-              spotPrice: stock.spotPrice,
-              todayTradedShares: stock.todayTradedShares,
-              avg20DTradedShares: stock.avg20DTradedShares,
-              volumeRatio: stock.volumeRatio,
-              crossoverTime: stock.crossoverTime,
-            });
-            if (acquired) {
-              newJournalEntries.push({
-                id: `sig-${stock.ticker}-${Date.now()}`,
-                timestamp: session.istTime || new Date().toLocaleTimeString('en-IN'),
-                strategyId: '20D_CROSSOVER',
-                strategyName: '20D Volume Crossover',
-                symbol: stock.ticker,
-                signalType: 'SELL',
-                entryPrice: stock.spotPrice,
-                outcome: 'OPEN',
-                notes: `🔴 Crossed 100% of 20D Avg (${(stock.volumeRatio * 100).toFixed(1)}% Vol). Bearish LTP < Open (Distribution).`,
+          } else if (stock.circleIndicator === 'RED') {
+            const isLocked = alertLatchService.isAlertLatched(stock.ticker, 'RED');
+            if (!isLocked) {
+              const acquired = await alertLatchService.acquireAlertLatch(stock.ticker, 'RED', {
+                spotPrice: stock.spotPrice,
+                todayTradedShares: stock.todayTradedShares,
+                avg20DTradedShares: stock.avg20DTradedShares,
+                volumeRatio: stock.volumeRatio,
+                crossoverTime: stock.crossoverTime,
               });
+              if (acquired) {
+                newJournalEntries.push({
+                  id: `sig-${stock.ticker}-${Date.now()}`,
+                  timestamp: session.istTime || new Date().toLocaleTimeString('en-IN'),
+                  strategyId: '20D_CROSSOVER',
+                  strategyName: '20D Volume Crossover',
+                  symbol: stock.ticker,
+                  signalType: 'SELL',
+                  entryPrice: stock.spotPrice,
+                  outcome: 'OPEN',
+                  notes: `🔴 Crossed 100% of 20D Avg (${(stock.volumeRatio * 100).toFixed(1)}% Vol). Bearish LTP < Open (Distribution).`,
+                });
+              }
             }
           }
         }
@@ -257,12 +215,16 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
         }
       }
 
-      const greenCount = stocks.filter((s) => s.circleIndicator === 'GREEN').length;
-      const redCount = stocks.filter((s) => s.circleIndicator === 'RED').length;
+      const greenCount = stocks.filter((s) => s.hasCrossed20D && s.todayTradedShares > 0 && s.circleIndicator === 'GREEN').length;
+      const redCount = stocks.filter((s) => s.hasCrossed20D && s.todayTradedShares > 0 && s.circleIndicator === 'RED').length;
       const telemetry = dhanDirectService.getTelemetry();
 
       const resolvedSpot = niftyIndexQuote && niftyIndexQuote.ltp > 0 ? niftyIndexQuote.ltp : get().niftySpot;
       const liveOobtst = niftyOptionFeedService.evaluateOobtst(resolvedSpot, session.istTime);
+
+      const isOvernightActive = overnight && (overnight.status === 'ACTIVE_HOLD' || overnight.status === 'OVERNIGHT_HOLD');
+      const isBreakoutActive = breakout && breakout.status === 'IN_TRADE';
+      const signalsTodayCount = greenCount + redCount + (isOvernightActive ? 1 : 0) + (isBreakoutActive ? 1 : 0);
 
       set((prev) => ({
         marketStatus: session.status,
@@ -272,7 +234,7 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
         niftyOvernight: overnight,
         oobtstState: liveOobtst,
         niftyBreakout180: breakout,
-        signalsTodayCount: greenCount + redCount + (overnight ? 1 : 0) + (breakout ? 1 : 0),
+        signalsTodayCount,
         feedStatus: telemetry.status,
         lastTickTime: telemetry.lastTickTime || session.istTime,
         journal: newJournalEntries.length > 0 ? [...newJournalEntries, ...prev.journal] : prev.journal,

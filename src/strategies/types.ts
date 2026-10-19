@@ -21,7 +21,8 @@ export interface OobtstLegDetail {
   triggerPrice: number;
   currentLtp: number;
   progressPct: number;
-  status: 'ARMED' | 'EXECUTED' | 'DISABLED' | 'SL_HIT';
+  status: 'ARMED' | 'EXECUTED' | 'DISABLED' | 'SL_HIT' | 'SCANNING';
+  isProvisional?: boolean;
 }
 
 export interface OobtstLiveState {
@@ -32,6 +33,9 @@ export interface OobtstLiveState {
   daysToExpiry: number;
   niftySpot: number;
   anchorTime: string;
+  isLocked: boolean;
+  isProvisional: boolean;
+  isMarketClosed: boolean;
   ceLeg: OobtstLegDetail;
   peLeg: OobtstLegDetail;
   activeLeg?: 'CE' | 'PE' | null;
@@ -82,6 +86,9 @@ export interface StrategySignalOutput {
       peStrike: string;
       peOpen: number;
       timestamp: string;
+      isLocked?: boolean;
+      isProvisional?: boolean;
+      isMarketClosed?: boolean;
     };
     step2?: {
       ceTrigger: number;

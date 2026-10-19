@@ -11,6 +11,17 @@ import { SENSEX_NIFTY_MASTER_CATALOG } from '../constants/stockUniverse';
 import { dhanDirectService } from './dhanDirectService';
 import { fetchFreeLiveQuotes } from './freeLiveMarketService';
 import { niftyOptionFeedService, getActiveWeeklyExpiry } from './niftyOptionFeedService';
+import { isTradingDay } from '../constants/nseHolidays';
+
+export function isMarketSessionBeforeOpen(): boolean {
+  const now = new Date();
+  const istHours = (now.getUTCHours() + 5 + Math.floor((now.getUTCMinutes() + 30) / 60)) % 24;
+  const istMinutes = (now.getUTCMinutes() + 30) % 60;
+  const totalMinutes = istHours * 60 + istMinutes;
+  // Continuous trading session is 09:15 - 15:30 IST (555 to 930 mins).
+  // Before 09:15 AM on any day, trading has not started, volume is strictly 0.
+  return totalMinutes < 555;
+}
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_CONFIG.BASE_URL}${endpoint}`;
@@ -65,6 +76,8 @@ export const apiService = {
 
   // 2. Strategy 1: 20D Volume Crossover Screener (All SENSEX & NIFTY 50 Stocks)
   async fetchStockRadarList(): Promise<StockRadarItem[]> {
+    const isBeforeOpen = isMarketSessionBeforeOpen() || !isTradingDay(new Date());
+
     // Priority 1: Direct Mobile-to-Dhan HQ Live Market Feed
     await dhanDirectService.initialize();
     if (dhanDirectService.isConfigured()) {
@@ -79,9 +92,9 @@ export const apiService = {
             const dayOpen = q && q.open > 0 ? q.open : spotPrice;
             const dayHigh = q && q.high > 0 ? q.high : spotPrice;
             const dayLow = q && q.low > 0 ? q.low : spotPrice;
-            const todayShares = q ? q.volume : 0;
+            const todayShares = isBeforeOpen ? 0 : (q ? q.volume : 0);
             const avgShares = m.avg20DTradedShares || 1;
-            const ratio = +(todayShares / avgShares).toFixed(3);
+            const ratio = todayShares > 0 ? +(todayShares / avgShares).toFixed(3) : 0;
             const hasCrossed = todayShares >= avgShares && todayShares > 0;
             const isBullish = spotPrice >= dayOpen;
             const close = q && q.close > 0 ? q.close : dayOpen;
@@ -141,9 +154,9 @@ export const apiService = {
           const dayOpen = q && q.open > 0 ? q.open : spotPrice;
           const dayHigh = q && q.high > 0 ? q.high : spotPrice;
           const dayLow = q && q.low > 0 ? q.low : spotPrice;
-          const todayShares = q ? q.volume : 0;
+          const todayShares = isBeforeOpen ? 0 : (q ? q.volume : 0);
           const avgShares = m.avg20DTradedShares || 1;
-          const ratio = +(todayShares / avgShares).toFixed(3);
+          const ratio = todayShares > 0 ? +(todayShares / avgShares).toFixed(3) : 0;
           const hasCrossed = todayShares >= avgShares && todayShares > 0;
           const isBullish = spotPrice >= dayOpen;
           const close = q && q.close > 0 ? q.close : dayOpen;
@@ -188,7 +201,7 @@ export const apiService = {
   // 3. Strategy 2: NIFTY 09:20 Overnight (62.5)
   async fetchNiftyOvernightState(): Promise<NiftyOvernightState> {
     await dhanDirectService.initialize();
-    let spot = 23146.15; // Baseline market close
+    let spot = 0;
 
     try {
       const indexQuote = await dhanDirectService.fetchNiftyIndexQuote();
@@ -197,12 +210,36 @@ export const apiService = {
       }
     } catch {}
 
+    if (spot === 0) {
+      try {
+        const freeQuotes = await fetchFreeLiveQuotes(['NIFTY']);
+        if (freeQuotes && freeQuotes['NIFTY']?.ltp > 0) {
+          spot = freeQuotes['NIFTY'].ltp;
+        }
+      } catch {}
+    }
+
+    if (spot === 0) {
+      spot = 24350.0; // fallback to approximate prevailing Nifty index level if feed is offline
+    }
+
+    // Sync live option chain from Dhan HQ API (/v2/optionchain)
+    try {
+      await niftyOptionFeedService.syncLiveOptionChain();
+    } catch {}
+
     try {
       const data = await request<any>(API_CONFIG.ENDPOINTS.NIFTY_OVERNIGHT);
       if (data && data.state) return data.state;
     } catch {}
 
-    const oobtst = niftyOptionFeedService.evaluateOobtst(spot);
+    let istTimeStr: string | undefined;
+    try {
+      const session = await this.fetchMarketSession();
+      istTimeStr = session.istTime;
+    } catch {}
+
+    const oobtst = niftyOptionFeedService.evaluateOobtst(spot, istTimeStr);
 
     return {
       strategyId: 'NIFTY_0920_PREMIUM_625_OVERNIGHT',
@@ -276,9 +313,10 @@ export const apiService = {
 };
 
 function formatRadarItem(raw: any): StockRadarItem {
-  const todayShares = Number(raw.todayTradedShares || raw.today_traded_shares || 0);
+  const isBeforeOpen = isMarketSessionBeforeOpen() || !isTradingDay(new Date());
+  const todayShares = isBeforeOpen ? 0 : Number(raw.todayTradedShares || raw.today_traded_shares || 0);
   const avgShares = Number(raw.avg20DTradedShares || raw.avg_20d_traded_shares || 1);
-  const ratio = +(todayShares / avgShares).toFixed(3);
+  const ratio = todayShares > 0 ? +(todayShares / avgShares).toFixed(3) : 0;
   const hasCrossed = todayShares >= avgShares && todayShares > 0;
   const isBullish = (raw.spotPrice || raw.ltp) >= (raw.dayOpen || raw.open);
 
@@ -304,7 +342,7 @@ function formatRadarItem(raw: any): StockRadarItem {
     avg20DTradedShares: avgShares,
     volumeRatio: ratio,
     hasCrossed20D: hasCrossed,
-    crossoverTime: raw.crossoverTime || (hasCrossed ? '10:14 AM' : undefined),
+    crossoverTime: hasCrossed ? raw.crossoverTime : undefined,
     crossoverDirection: isBullish ? 'BULLISH' : 'BEARISH',
     circleIndicator,
     strikeStep: raw.strikeStep || 20,
@@ -313,13 +351,40 @@ function formatRadarItem(raw: any): StockRadarItem {
 }
 
 function generateCatalogRadarStocks(): StockRadarItem[] {
+  const isBeforeOpen = isMarketSessionBeforeOpen() || !isTradingDay(new Date());
+
   // Simulates realistic market sessions across all SENSEX & NIFTY 50 constituents
   return SENSEX_NIFTY_MASTER_CATALOG.map((m) => {
+    // If today is a new day and session has not opened yet, volume is strictly 0
+    if (isBeforeOpen) {
+      return {
+        ticker: m.ticker,
+        name: m.name,
+        exchange: 'NSE',
+        sector: m.sector,
+        indices: m.indices,
+        spotPrice: m.approxLtp,
+        dayOpen: m.approxLtp,
+        dayHigh: m.approxLtp,
+        dayLow: m.approxLtp,
+        percentChange: 0,
+        todayTradedShares: 0,
+        avg20DTradedShares: m.avg20DTradedShares,
+        volumeRatio: 0,
+        hasCrossed20D: false,
+        crossoverTime: undefined,
+        crossoverDirection: 'BULLISH',
+        circleIndicator: 'GREY',
+        strikeStep: m.strikeStep,
+        lotSize: m.lotSize,
+      };
+    }
+
     let volumeRatio = 0.55;
     let percentChange = 0.45;
     let crossoverTime: string | undefined = undefined;
 
-    // Specific deterministic breakout examples
+    // Specific deterministic breakout examples during live hours
     if (m.ticker === 'RELIANCE') {
       volumeRatio = 1.103;
       percentChange = +1.25;

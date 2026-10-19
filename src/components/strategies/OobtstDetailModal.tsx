@@ -26,6 +26,9 @@ interface OobtstDetailModalProps {
       peStrike: string;
       peOpen: number;
       timestamp: string;
+      isLocked?: boolean;
+      isProvisional?: boolean;
+      isMarketClosed?: boolean;
     };
     step2?: {
       ceTrigger: number;
@@ -50,31 +53,38 @@ export function OobtstDetailModal({
   istTime,
   stepDetails,
 }: OobtstDetailModalProps) {
-  const currentStep = stepDetails?.currentStep ?? 3;
+  const currentStep = stepDetails?.currentStep ?? 1;
 
   const step1 = stepDetails?.step1 ?? {
-    ceStrike: 'NIFTY 23300 CE',
-    ceOpen: 61.5,
-    peStrike: 'NIFTY 23050 PE',
-    peOpen: 62.0,
+    ceStrike: '--',
+    ceOpen: 0,
+    peStrike: '--',
+    peOpen: 0,
     timestamp: '09:20:00 IST',
+    isLocked: false,
+    isProvisional: false,
+    isMarketClosed: true,
   };
 
   const step2 = stepDetails?.step2 ?? {
-    ceTrigger: 92.25,
-    ceLtp: 61.5,
-    peTrigger: 93.0,
-    peLtp: 62.0,
+    ceTrigger: 0,
+    ceLtp: 0,
+    peTrigger: 0,
+    peLtp: 0,
     multiplier: 1.5,
   };
 
   const step3 = stepDetails?.step3 ?? {
-    executedSymbol: 'NIFTY 23300 CE',
-    executedPrice: 92.25,
-    slPrice: 46.1,
-    status: 'ACTIVE',
-    riskPerLot: 1153.0,
+    executedSymbol: '--',
+    executedPrice: 0,
+    slPrice: 0,
+    status: 'SCANNING',
+    riskPerLot: 0,
   };
+
+  const isMarketClosed = step1.isMarketClosed ?? false;
+  const isProvisional = step1.isProvisional ?? false;
+  const isLocked = step1.isLocked ?? false;
 
   const isCeExecuted = currentStep === 3 && step3.executedSymbol.includes('CE');
   const isPeExecuted = currentStep === 3 && step3.executedSymbol.includes('PE');
@@ -98,8 +108,8 @@ export function OobtstDetailModal({
     }
   };
 
-  const ceProgress = Math.min(100, Math.round((step2.ceLtp / step2.ceTrigger) * 100));
-  const peProgress = Math.min(100, Math.round((step2.peLtp / step2.peTrigger) * 100));
+  const ceProgress = step2.ceTrigger > 0 ? Math.min(100, Math.round((step2.ceLtp / step2.ceTrigger) * 100)) : 0;
+  const peProgress = step2.peTrigger > 0 ? Math.min(100, Math.round((step2.peLtp / step2.peTrigger) * 100)) : 0;
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
@@ -137,7 +147,11 @@ export function OobtstDetailModal({
               <Text style={styles.metaValue}>
                 {currentStep === 3
                   ? (step3.status === 'SL_HIT' ? '🛑 STOP LOSS HIT' : step3.status === 'BTST_HOLD' ? '🌙 BTST OVERNIGHT HOLD' : '🔥 OOBTST POSITION ACTIVE')
-                  : currentStep === 2 ? '⚡ ARMED 1.5x BREAKOUT' : '🕒 09:20 SCANNING'}
+                  : currentStep === 2
+                  ? '⚡ ARMED 1.5x BREAKOUT'
+                  : isProvisional
+                  ? '⚡ PROVISIONAL CANDIDATES (09:15 - 09:20)'
+                  : '⚪ MARKET CLOSED (STRIKES UNLOCKED)'}
               </Text>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
@@ -149,15 +163,69 @@ export function OobtstDetailModal({
           {/* STEP 1 CARD */}
           <View style={[styles.stepCard, currentStep >= 1 && styles.stepCardActive]}>
             <View style={styles.stepHeader}>
-              <View style={styles.stepNumberBadge}>
-                <Text style={styles.stepNumberText}>STEP 1</Text>
+              <View
+                style={[
+                  styles.stepNumberBadge,
+                  isMarketClosed
+                    ? { backgroundColor: colors.surfaceSubtle }
+                    : isProvisional
+                    ? { backgroundColor: colors.cyan }
+                    : { backgroundColor: colors.bullish },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.stepNumberText,
+                    isProvisional || !isMarketClosed ? { color: colors.obsidian } : {},
+                  ]}
+                >
+                  STEP 1
+                </Text>
               </View>
               <View style={{ flex: 1, marginLeft: 8 }}>
                 <Text style={styles.stepTitle}>09:20 Candle Open Selection (~₹62.50)</Text>
-                <Text style={styles.stepSub}>Locked precisely at 09:20:00 IST candle open tick</Text>
+                <Text style={styles.stepSub}>
+                  {isMarketClosed
+                    ? 'Strikes unlocked. Nearest valid candidates tracked from live spot.'
+                    : isProvisional
+                    ? 'Provisional candidates: dynamically updating live until 09:20:00 tick'
+                    : 'Locked precisely at 09:20:00 IST candle open tick'}
+                </Text>
               </View>
-              <View style={styles.stepLockBadge}>
-                <Text style={styles.stepLockText}>🔒 LOCKED</Text>
+              <View
+                style={[
+                  styles.stepLockBadge,
+                  isMarketClosed
+                    ? { backgroundColor: 'rgba(234, 179, 8, 0.15)' }
+                    : isProvisional
+                    ? { backgroundColor: 'rgba(6, 182, 212, 0.15)' }
+                    : isLocked
+                    ? { backgroundColor: 'rgba(16, 185, 129, 0.15)' }
+                    : { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.stepLockText,
+                    {
+                      color: isMarketClosed
+                        ? colors.warning
+                        : isProvisional
+                        ? colors.cyan
+                        : isLocked
+                        ? colors.bullish
+                        : colors.textMuted,
+                    },
+                  ]}
+                >
+                  {isMarketClosed
+                    ? '⚪ MARKET CLOSED'
+                    : isProvisional
+                    ? '⚡ PROVISIONAL'
+                    : isLocked
+                    ? '🔒 LOCKED AT 09:20'
+                    : '⏳ SCANNING'}
+                </Text>
               </View>
             </View>
 
@@ -168,9 +236,15 @@ export function OobtstDetailModal({
                   <Text style={styles.boxTagText}>CALL (CE)</Text>
                 </View>
                 <Text style={styles.boxSymbol}>{step1.ceStrike}</Text>
-                <Text style={styles.boxOpenPrice}>09:20 Open: ₹{step1.ceOpen.toFixed(2)}</Text>
+                <Text style={styles.boxOpenPrice}>
+                  {step1.ceOpen > 0
+                    ? `${isLocked ? '09:20 Open' : isProvisional ? 'Live Candidate' : 'Reference'}: ₹${step1.ceOpen.toFixed(2)}`
+                    : 'Price: ₹-- (Market Closed)'}
+                </Text>
                 <Text style={styles.boxDelta}>
-                  Δ from ₹62.5: {step1.ceOpen >= 62.5 ? `+₹${(step1.ceOpen - 62.5).toFixed(2)}` : `-₹${(62.5 - step1.ceOpen).toFixed(2)}`}
+                  {step1.ceOpen > 0
+                    ? `Δ from ₹62.5: ${step1.ceOpen >= 62.5 ? `+₹${(step1.ceOpen - 62.5).toFixed(2)}` : `-₹${(62.5 - step1.ceOpen).toFixed(2)}`}`
+                    : 'Awaiting 09:15 open candle'}
                 </Text>
               </View>
 
@@ -180,9 +254,15 @@ export function OobtstDetailModal({
                   <Text style={[styles.boxTagText, { color: colors.bearish }]}>PUT (PE)</Text>
                 </View>
                 <Text style={styles.boxSymbol}>{step1.peStrike}</Text>
-                <Text style={styles.boxOpenPrice}>09:20 Open: ₹{step1.peOpen.toFixed(2)}</Text>
+                <Text style={styles.boxOpenPrice}>
+                  {step1.peOpen > 0
+                    ? `${isLocked ? '09:20 Open' : isProvisional ? 'Live Candidate' : 'Reference'}: ₹${step1.peOpen.toFixed(2)}`
+                    : 'Price: ₹-- (Market Closed)'}
+                </Text>
                 <Text style={styles.boxDelta}>
-                  Δ from ₹62.5: {step1.peOpen >= 62.5 ? `+₹${(step1.peOpen - 62.5).toFixed(2)}` : `-₹${(62.5 - step1.peOpen).toFixed(2)}`}
+                  {step1.peOpen > 0
+                    ? `Δ from ₹62.5: ${step1.peOpen >= 62.5 ? `+₹${(step1.peOpen - 62.5).toFixed(2)}` : `-₹${(62.5 - step1.peOpen).toFixed(2)}`}`
+                    : 'Awaiting 09:15 open candle'}
                 </Text>
               </View>
             </View>
@@ -204,15 +284,43 @@ export function OobtstDetailModal({
           {/* STEP 2 CARD */}
           <View style={[styles.stepCard, currentStep >= 2 && styles.stepCardActive]}>
             <View style={styles.stepHeader}>
-              <View style={[styles.stepNumberBadge, { backgroundColor: colors.cyan }]}>
-                <Text style={[styles.stepNumberText, { color: colors.obsidian }]}>STEP 2</Text>
+              <View
+                style={[
+                  styles.stepNumberBadge,
+                  currentStep >= 2
+                    ? { backgroundColor: colors.cyan }
+                    : { backgroundColor: colors.surfaceSubtle },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.stepNumberText,
+                    currentStep >= 2 ? { color: colors.obsidian } : {},
+                  ]}
+                >
+                  STEP 2
+                </Text>
               </View>
               <View style={{ flex: 1, marginLeft: 8 }}>
                 <Text style={styles.stepTitle}>1.5x Dual Momentum Breakout Trigger</Text>
                 <Text style={styles.stepSub}>Buy Trigger = 09:20 Open Price × 1.5</Text>
               </View>
-              <View style={[styles.stepLockBadge, { backgroundColor: 'rgba(6, 182, 212, 0.15)' }]}>
-                <Text style={[styles.stepLockText, { color: colors.cyan }]}>⚡ ARMED</Text>
+              <View
+                style={[
+                  styles.stepLockBadge,
+                  currentStep >= 2
+                    ? { backgroundColor: 'rgba(6, 182, 212, 0.15)' }
+                    : { backgroundColor: 'rgba(255, 255, 255, 0.05)' },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.stepLockText,
+                    { color: currentStep >= 2 ? colors.cyan : colors.textMuted },
+                  ]}
+                >
+                  {currentStep >= 2 ? '⚡ ARMED' : '⏳ PENDING 09:20'}
+                </Text>
               </View>
             </View>
 
@@ -220,22 +328,56 @@ export function OobtstDetailModal({
             <View style={styles.triggerItem}>
               <View style={styles.triggerRow}>
                 <Text style={styles.triggerSymbol}>{step1.ceStrike}</Text>
-                <View style={isCeExecuted ? styles.triggerBadgeActive : isCeCancelled ? styles.triggerBadgeCancelled : styles.triggerBadgeArmed}>
-                  <Text style={isCeExecuted ? styles.triggerBadgeActiveText : isCeCancelled ? styles.triggerBadgeCancelledText : styles.triggerBadgeArmedText}>
-                    {isCeExecuted ? '🟢 EXECUTED (CROSS 1.5x)' : isCeCancelled ? '❌ CANCELLED (OCO)' : '⚡ ARMED (WAITING 1.5x)'}
+                <View
+                  style={
+                    isCeExecuted
+                      ? styles.triggerBadgeActive
+                      : isCeCancelled
+                      ? styles.triggerBadgeCancelled
+                      : currentStep >= 2
+                      ? styles.triggerBadgeArmed
+                      : styles.triggerBadgeCancelled
+                  }
+                >
+                  <Text
+                    style={
+                      isCeExecuted
+                        ? styles.triggerBadgeActiveText
+                        : isCeCancelled
+                        ? styles.triggerBadgeCancelledText
+                        : currentStep >= 2
+                        ? styles.triggerBadgeArmedText
+                        : styles.triggerBadgeCancelledText
+                    }
+                  >
+                    {isCeExecuted
+                      ? '🟢 EXECUTED (CROSS 1.5x)'
+                      : isCeCancelled
+                      ? '❌ CANCELLED (OCO)'
+                      : currentStep >= 2
+                      ? '⚡ ARMED (WAITING 1.5x)'
+                      : '⏳ PENDING'}
                   </Text>
                 </View>
               </View>
               <View style={styles.triggerMetrics}>
                 <Text style={styles.triggerMetricText}>
-                  1.5x Trigger: <Text style={styles.boldWhite}>₹{step2.ceTrigger.toFixed(2)}</Text>
+                  1.5x Trigger: <Text style={styles.boldWhite}>{step2.ceTrigger > 0 ? `₹${step2.ceTrigger.toFixed(2)}` : '--'}</Text>
                 </Text>
                 <Text style={styles.triggerMetricText}>
-                  LTP: <Text style={[styles.boldWhite, { color: isCeExecuted ? colors.bullish : colors.textPrimary }]}>₹{step2.ceLtp.toFixed(2)}</Text> ({ceProgress}%)
+                  LTP: <Text style={[styles.boldWhite, { color: isCeExecuted ? colors.bullish : colors.textPrimary }]}>{step2.ceLtp > 0 ? `₹${step2.ceLtp.toFixed(2)}` : '--'}</Text>{step2.ceTrigger > 0 ? ` (${ceProgress}%)` : ''}
                 </Text>
               </View>
               <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${ceProgress}%`, backgroundColor: isCeExecuted ? colors.bullish : isCeCancelled ? colors.textMuted : colors.cyan }]} />
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    {
+                      width: `${ceProgress}%`,
+                      backgroundColor: isCeExecuted ? colors.bullish : isCeCancelled ? colors.textMuted : colors.cyan,
+                    },
+                  ]}
+                />
               </View>
             </View>
 
@@ -243,22 +385,56 @@ export function OobtstDetailModal({
             <View style={[styles.triggerItem, { marginTop: 10 }]}>
               <View style={styles.triggerRow}>
                 <Text style={styles.triggerSymbol}>{step1.peStrike}</Text>
-                <View style={isPeExecuted ? styles.triggerBadgeActive : isPeCancelled ? styles.triggerBadgeCancelled : styles.triggerBadgeArmed}>
-                  <Text style={isPeExecuted ? styles.triggerBadgeActiveText : isPeCancelled ? styles.triggerBadgeCancelledText : styles.triggerBadgeArmedText}>
-                    {isPeExecuted ? '🟢 EXECUTED (CROSS 1.5x)' : isPeCancelled ? '❌ CANCELLED (OCO)' : '⚡ ARMED (WAITING 1.5x)'}
+                <View
+                  style={
+                    isPeExecuted
+                      ? styles.triggerBadgeActive
+                      : isPeCancelled
+                      ? styles.triggerBadgeCancelled
+                      : currentStep >= 2
+                      ? styles.triggerBadgeArmed
+                      : styles.triggerBadgeCancelled
+                  }
+                >
+                  <Text
+                    style={
+                      isPeExecuted
+                        ? styles.triggerBadgeActiveText
+                        : isPeCancelled
+                        ? styles.triggerBadgeCancelledText
+                        : currentStep >= 2
+                        ? styles.triggerBadgeArmedText
+                        : styles.triggerBadgeCancelledText
+                    }
+                  >
+                    {isPeExecuted
+                      ? '🟢 EXECUTED (CROSS 1.5x)'
+                      : isPeCancelled
+                      ? '❌ CANCELLED (OCO)'
+                      : currentStep >= 2
+                      ? '⚡ ARMED (WAITING 1.5x)'
+                      : '⏳ PENDING'}
                   </Text>
                 </View>
               </View>
               <View style={styles.triggerMetrics}>
                 <Text style={styles.triggerMetricText}>
-                  1.5x Trigger: <Text style={styles.boldWhite}>₹{step2.peTrigger.toFixed(2)}</Text>
+                  1.5x Trigger: <Text style={styles.boldWhite}>{step2.peTrigger > 0 ? `₹${step2.peTrigger.toFixed(2)}` : '--'}</Text>
                 </Text>
                 <Text style={styles.triggerMetricText}>
-                  LTP: <Text style={[styles.boldWhite, { color: isPeExecuted ? colors.bullish : colors.textPrimary }]}>₹{step2.peLtp.toFixed(2)}</Text> ({peProgress}%)
+                  LTP: <Text style={[styles.boldWhite, { color: isPeExecuted ? colors.bullish : colors.textPrimary }]}>{step2.peLtp > 0 ? `₹${step2.peLtp.toFixed(2)}` : '--'}</Text>{step2.peTrigger > 0 ? ` (${peProgress}%)` : ''}
                 </Text>
               </View>
               <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${peProgress}%`, backgroundColor: isPeExecuted ? colors.bullish : isPeCancelled ? colors.textMuted : colors.cyan }]} />
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    {
+                      width: `${peProgress}%`,
+                      backgroundColor: isPeExecuted ? colors.bullish : isPeCancelled ? colors.textMuted : colors.cyan,
+                    },
+                  ]}
+                />
               </View>
             </View>
 
@@ -329,13 +505,31 @@ export function OobtstDetailModal({
                   </View>
                 </View>
               </View>
-            ) : (
+            ) : currentStep === 2 ? (
               <View style={[styles.oobtstHero, { alignItems: 'center', paddingVertical: 18 }]}>
                 <Text style={{ color: colors.cyan, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>
                   ⚡ Awaiting 1.5x Breakout Breach
                 </Text>
                 <Text style={{ color: colors.textSecondary, fontSize: 11, textAlign: 'center', lineHeight: 16 }}>
                   Both legs are actively armed. The instant CE reaches ₹{step2.ceTrigger.toFixed(2)} or PE reaches ₹{step2.peTrigger.toFixed(2)}, this card will execute with strict 50% SL locked.
+                </Text>
+              </View>
+            ) : isProvisional ? (
+              <View style={[styles.oobtstHero, { alignItems: 'center', paddingVertical: 18 }]}>
+                <Text style={{ color: colors.cyan, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>
+                  ⚡ Step 1 Provisional Tracking (09:15 - 09:20 IST)
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11, textAlign: 'center', lineHeight: 16 }}>
+                  Scanning nearest option strikes to ₹62.50. Target strikes lock permanently and 1.5x triggers activate at 09:20:00 IST.
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.oobtstHero, { alignItems: 'center', paddingVertical: 18 }]}>
+                <Text style={{ color: colors.warning, fontSize: 13, fontWeight: '700', marginBottom: 6 }}>
+                  ⚪ Market Closed (Strikes Unlocked)
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 11, textAlign: 'center', lineHeight: 16 }}>
+                  Market opens at 09:15 IST. Candidate strikes will update provisionally from 09:15 to 09:20 AM and lock at 09:20 AM.
                 </Text>
               </View>
             )}

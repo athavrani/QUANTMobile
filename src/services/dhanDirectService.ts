@@ -378,6 +378,57 @@ class DhanDirectService {
   }
 
   /**
+   * Fetches the official live Dhan HQ Option Chain for NIFTY Index
+   * Direct POST to /v2/optionchain
+   */
+  public async fetchOptionChain(
+    expiryDate: string
+  ): Promise<Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }> | null> {
+    await this.initialize();
+    if (!this.cachedClientId || !this.cachedAccessToken) return null;
+
+    try {
+      const res = await fetch(`${DHAN_BASE_URL}/optionchain`, {
+        method: 'POST',
+        headers: {
+          'access-token': this.cachedAccessToken,
+          'client-id': this.cachedClientId,
+          'dhanClientId': this.cachedClientId,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          UnderlyingScrip: parseInt(DHAN_NIFTY_INDEX_ID, 10),
+          UnderlyingSeg: 'IDX_I',
+          Expiry: expiryDate,
+        }),
+      });
+
+      if (!res.ok) return null;
+
+      const json = await res.json();
+      const oc = json?.data?.oc;
+      if (!oc || typeof oc !== 'object') return null;
+
+      const result: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }> = {};
+      for (const [strikeStr, data] of Object.entries(oc as Record<string, any>)) {
+        const strike = Math.round(parseFloat(strikeStr));
+        if (!isNaN(strike)) {
+          result[strike] = {
+            ceLtp: Number(data.ce?.last_price || 0),
+            peLtp: Number(data.pe?.last_price || 0),
+            ceOi: Number(data.ce?.oi || 0),
+            peOi: Number(data.pe?.oi || 0),
+          };
+        }
+      }
+      return Object.keys(result).length > 0 ? result : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Fetches live NIFTY 50 Index quote directly from Dhan HQ (/marketfeed/ohlc)
    */
   public async fetchNiftyIndexQuote(): Promise<{ ltp: number; open: number; high: number; low: number; close: number } | null> {

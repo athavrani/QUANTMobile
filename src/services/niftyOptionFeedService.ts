@@ -79,6 +79,7 @@ export function getActiveWeeklyExpiry(
   forOobtst = true
 ): {
   expiryStr: string;
+  expiryDateYMD: string;
   daysToExpiry: number;
   tYears: number;
   isExpiryDay: boolean;
@@ -127,6 +128,10 @@ export function getActiveWeeklyExpiry(
   const yearStr = adjustedDate.getFullYear();
   const expiryStr = `${dayStr}-${monthStr}-${yearStr}`;
 
+  const mNumStr = String(adjustedDate.getMonth() + 1).padStart(2, '0');
+  const dNumStr = String(adjustedDate.getDate()).padStart(2, '0');
+  const expiryDateYMD = `${yearStr}-${mNumStr}-${dNumStr}`;
+
   let originalScheduledStr: string | undefined;
   if (wasPreponed && scheduledDate) {
     const sDay = String(scheduledDate.getDate()).padStart(2, '0');
@@ -142,6 +147,7 @@ export function getActiveWeeklyExpiry(
 
   return {
     expiryStr,
+    expiryDateYMD,
     daysToExpiry,
     tYears,
     isExpiryDay,
@@ -165,19 +171,74 @@ interface OobtstDayAnchor {
   peOpen: number;
   peTrigger: number;
   expiryStr: string;
+  isConfirmed: boolean;
+  isProvisional: boolean;
+  isMarketClosed: boolean;
+  confirmedAt?: string;
+}
+
+export function parseIstSeconds(istTimeStr?: string): { totalMinutes: number; totalSeconds: number } {
+  if (istTimeStr) {
+    const match = istTimeStr.match(/(\d{1,2}):(\d{2}):?(\d{2})?\s*(AM|PM)?/i);
+    if (match) {
+      let hours = parseInt(match[1], 10);
+      const minutes = parseInt(match[2], 10);
+      const seconds = match[3] ? parseInt(match[3], 10) : 0;
+      const meridiem = match[4]?.toUpperCase();
+      if (meridiem === 'PM' && hours < 12) hours += 12;
+      if (meridiem === 'AM' && hours === 12) hours = 0;
+      const totalMinutes = hours * 60 + minutes;
+      return { totalMinutes, totalSeconds: totalMinutes * 60 + seconds };
+    }
+  }
+  const now = new Date();
+  const utcHours = now.getUTCHours();
+  const utcMins = now.getUTCMinutes();
+  const istH = (utcHours + 5 + Math.floor((utcMins + 30) / 60)) % 24;
+  const istM = (utcMins + 30) % 60;
+  const totalMinutes = istH * 60 + istM;
+  return { totalMinutes, totalSeconds: totalMinutes * 60 + now.getUTCSeconds() };
 }
 
 class NiftyOptionFeedService {
   private cachedAnchor: OobtstDayAnchor | null = null;
   private peakCeLtp: number = 0;
   private peakPeLtp: number = 0;
+  private cachedLiveOptionChain: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }> | null = null;
+  private lastOptionChainSyncTime = 0;
 
   /**
-   * Selects Call and Put strikes whose 09:20 open is closest to ₹62.50
+   * Syncs live option chain directly from Dhan HQ API (/v2/optionchain)
+   */
+  public async syncLiveOptionChain(): Promise<boolean> {
+    const { expiryDateYMD } = getActiveWeeklyExpiry(new Date(), true);
+    try {
+      const ocData = await dhanDirectService.fetchOptionChain(expiryDateYMD);
+      if (ocData && Object.keys(ocData).length > 0) {
+        this.cachedLiveOptionChain = ocData;
+        this.lastOptionChainSyncTime = Date.now();
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
+  public getLiveOptionPrice(strike: number, type: 'CE' | 'PE'): number {
+    if (this.cachedLiveOptionChain && this.cachedLiveOptionChain[strike]) {
+      const item = this.cachedLiveOptionChain[strike];
+      const p = type === 'CE' ? item.ceLtp : item.peLtp;
+      if (p > 0) return p;
+    }
+    return 0;
+  }
+
+  /**
+   * Selects Call and Put strikes whose live price is closest to ₹62.50
+   * Uses LIVE option market data only.
    */
   public selectAnchorStrikes(
     spot: number,
-    tYears: number,
+    tYears?: number,
     targetPremium = ANCHOR_TARGET_PREMIUM
   ): {
     ceStrike: number;
@@ -187,68 +248,92 @@ class NiftyOptionFeedService {
   } {
     const atm = Math.round(spot / NIFTY_STRIKE_STEP) * NIFTY_STRIKE_STEP;
 
-    let bestCeStrike = atm + 250;
-    let minCeDiff = Infinity;
-    let bestCePrice = targetPremium;
+    // Priority 1: Check live option chain if available
+    if (this.cachedLiveOptionChain && Object.keys(this.cachedLiveOptionChain).length > 0) {
+      let bestCeStrike = 0;
+      let minCeDiff = Infinity;
+      let bestCePrice = 0;
 
-    let bestPeStrike = atm - 250;
-    let minPeDiff = Infinity;
-    let bestPePrice = targetPremium;
+      let bestPeStrike = 0;
+      let minPeDiff = Infinity;
+      let bestPePrice = 0;
 
-    // Scan strikes ATM - 1200 to ATM + 1200
-    for (let strike = atm - 1200; strike <= atm + 1200; strike += NIFTY_STRIKE_STEP) {
-      // CE
-      if (strike >= atm) {
-        const cePrice = calculateBlackScholesPrice(spot, strike, tYears, 'CE');
-        const ceDiff = Math.abs(cePrice - targetPremium);
-        if (ceDiff < minCeDiff) {
-          minCeDiff = ceDiff;
-          bestCeStrike = strike;
-          bestCePrice = cePrice;
+      for (const [strikeStr, data] of Object.entries(this.cachedLiveOptionChain)) {
+        const strike = Number(strikeStr);
+        if (strike >= atm && data.ceLtp > 0) {
+          const diff = Math.abs(data.ceLtp - targetPremium);
+          if (diff < minCeDiff) {
+            minCeDiff = diff;
+            bestCeStrike = strike;
+            bestCePrice = data.ceLtp;
+          }
+        }
+        if (strike <= atm && data.peLtp > 0) {
+          const diff = Math.abs(data.peLtp - targetPremium);
+          if (diff < minPeDiff) {
+            minPeDiff = diff;
+            bestPeStrike = strike;
+            bestPePrice = data.peLtp;
+          }
         }
       }
 
-      // PE
-      if (strike <= atm) {
-        const pePrice = calculateBlackScholesPrice(spot, strike, tYears, 'PE');
-        const peDiff = Math.abs(pePrice - targetPremium);
-        if (peDiff < minPeDiff) {
-          minPeDiff = peDiff;
-          bestPeStrike = strike;
-          bestPePrice = pePrice;
-        }
+      if (bestCeStrike > 0 && bestPeStrike > 0) {
+        return {
+          ceStrike: bestCeStrike,
+          ceOpen: bestCePrice,
+          peStrike: bestPeStrike,
+          peOpen: bestPePrice,
+        };
       }
     }
 
+    // Default to nearest valid OTM strikes around live ATM (5 strikes = 250 pts)
     return {
-      ceStrike: bestCeStrike,
-      ceOpen: bestCePrice,
-      peStrike: bestPeStrike,
-      peOpen: bestPePrice,
+      ceStrike: atm + 250,
+      ceOpen: 0,
+      peStrike: atm - 250,
+      peOpen: 0,
     };
   }
 
   /**
-   * Retrieves or initializes the locked 09:20 day anchor
+   * Retrieves or initializes the 09:20 day anchor.
+   * Invariant:
+   * 1. Before 09:15 AM (Market Closed): strikes are not locked.
+   * 2. 09:15 to 09:20 AM (Pre-Confirmation): strikes are provisional candidates and update dynamically if target strike changes.
+   * 3. At or after 09:20 AM: target strikes confirmed and locked for the day.
    */
-  public getOrCreateDayAnchor(spot: number): OobtstDayAnchor {
+  public getOrCreateDayAnchor(spot: number, istTimeStr?: string): OobtstDayAnchor {
     const today = formatDateKeyIST();
-    const { expiryStr, tYears } = getActiveWeeklyExpiry(new Date(), true);
+    const { expiryStr } = getActiveWeeklyExpiry(new Date(), true);
+    const { totalSeconds } = parseIstSeconds(istTimeStr);
 
+    const gate0915 = 9 * 3600 + 15 * 60; // 33,300s (09:15:00 AM)
+    const gate0920 = 9 * 3600 + 20 * 60; // 33,600s (09:20:00 AM)
+
+    const isMarketClosed = totalSeconds < gate0915;
+    const isProvisional = totalSeconds >= gate0915 && totalSeconds < gate0920;
+    const isConfirmationTime = totalSeconds >= gate0920;
+
+    // If anchor was already confirmed today at or after 09:20:00, it is permanently locked for today's session
     if (
       this.cachedAnchor &&
       this.cachedAnchor.tradeDate === today &&
       this.cachedAnchor.expiryStr === expiryStr &&
-      Math.abs(this.cachedAnchor.anchorSpot - spot) < 50
+      this.cachedAnchor.isConfirmed
     ) {
       return this.cachedAnchor;
     }
 
-    const { ceStrike, ceOpen, peStrike, peOpen } = this.selectAnchorStrikes(spot, tYears);
-    const ceTrigger = +(ceOpen * 1.5).toFixed(2);
-    const peTrigger = +(peOpen * 1.5).toFixed(2);
+    // On a new trading day, or before 09:20 confirmation:
+    // Select nearest valid option strikes dynamically!
+    // "Lock future strikes provisionally, but update them if the target strike changes before confirmation."
+    const { ceStrike, ceOpen, peStrike, peOpen } = this.selectAnchorStrikes(spot);
+    const ceTrigger = ceOpen > 0 ? +(ceOpen * 1.5).toFixed(2) : 0;
+    const peTrigger = peOpen > 0 ? +(peOpen * 1.5).toFixed(2) : 0;
 
-    this.cachedAnchor = {
+    const newAnchor: OobtstDayAnchor = {
       tradeDate: today,
       anchorSpot: spot,
       ceStrike,
@@ -258,12 +343,22 @@ class NiftyOptionFeedService {
       peOpen,
       peTrigger,
       expiryStr,
+      isConfirmed: isConfirmationTime,
+      isProvisional: isProvisional,
+      isMarketClosed: isMarketClosed,
+      confirmedAt: isConfirmationTime ? '09:20:00 IST' : undefined,
     };
 
-    this.peakCeLtp = ceOpen;
-    this.peakPeLtp = peOpen;
+    if (isConfirmationTime) {
+      this.cachedAnchor = newAnchor;
+      this.peakCeLtp = ceOpen;
+      this.peakPeLtp = peOpen;
+    } else {
+      // Provisional candidate (not permanently locked)
+      this.cachedAnchor = newAnchor;
+    }
 
-    return this.cachedAnchor;
+    return newAnchor;
   }
 
   /**
@@ -359,21 +454,124 @@ class NiftyOptionFeedService {
    */
   public evaluateOobtst(spot: number, istTimeStr?: string): OobtstLiveState {
     const nowTime = istTimeStr || new Date().toLocaleTimeString('en-IN');
-    const { expiryStr, daysToExpiry, tYears } = getActiveWeeklyExpiry(new Date(), true);
-    const anchor = this.getOrCreateDayAnchor(spot);
+    const { expiryStr, daysToExpiry } = getActiveWeeklyExpiry(new Date(), true);
+    const { totalSeconds } = parseIstSeconds(istTimeStr);
 
-    // Live options pricing based on real-time NIFTY spot tick
-    const ceLtp = calculateBlackScholesPrice(spot, anchor.ceStrike, tYears, 'CE');
-    const peLtp = calculateBlackScholesPrice(spot, anchor.peStrike, tYears, 'PE');
+    const gate0915 = 9 * 3600 + 15 * 60; // 33,300s (09:15:00 AM)
+    const gate0920 = 9 * 3600 + 20 * 60; // 33,600s (09:20:00 AM)
 
+    const isMarketClosed = totalSeconds < gate0915;
+    const isProvisional = totalSeconds >= gate0915 && totalSeconds < gate0920;
+    const isConfirmed = totalSeconds >= gate0920;
+
+    const anchor = this.getOrCreateDayAnchor(spot, istTimeStr);
+
+    // Live options pricing based on real-time Dhan Option Chain
+    let ceLtp = this.getLiveOptionPrice(anchor.ceStrike, 'CE');
+    let peLtp = this.getLiveOptionPrice(anchor.peStrike, 'PE');
+
+    // Case 1: Market Closed (Before 09:15 IST)
+    // Invariant: Do NOT display locked strikes when the market is closed.
+    if (isMarketClosed) {
+      const ceLeg: OobtstLegDetail = {
+        type: 'CE',
+        strike: anchor.ceStrike,
+        symbol: `NIFTY ${anchor.ceStrike} CE`,
+        openPrice: 0,
+        triggerPrice: 0,
+        currentLtp: ceLtp,
+        progressPct: 0,
+        status: 'SCANNING',
+        isProvisional: false,
+      };
+
+      const peLeg: OobtstLegDetail = {
+        type: 'PE',
+        strike: anchor.peStrike,
+        symbol: `NIFTY ${anchor.peStrike} PE`,
+        openPrice: 0,
+        triggerPrice: 0,
+        currentLtp: peLtp,
+        progressPct: 0,
+        status: 'SCANNING',
+        isProvisional: false,
+      };
+
+      return {
+        currentStep: 1,
+        status: 'SCANNING',
+        statusBadgeText: 'MARKET_CLOSED',
+        expiryDate: expiryStr,
+        daysToExpiry,
+        niftySpot: spot,
+        anchorTime: '09:20:00 IST',
+        isLocked: false,
+        isProvisional: false,
+        isMarketClosed: true,
+        ceLeg,
+        peLeg,
+        activeLeg: null,
+        lastUpdated: nowTime,
+      };
+    }
+
+    // Case 2: Pre-Confirmation Window (09:15:00 - 09:19:59 IST)
+    // Invariant: Lock future strikes provisionally, but update them if the target strike changes before confirmation.
+    if (isProvisional) {
+      const ceProgress = anchor.ceTrigger > 0 ? Math.min(100, Math.round((ceLtp / anchor.ceTrigger) * 100)) : 0;
+      const peProgress = anchor.peTrigger > 0 ? Math.min(100, Math.round((peLtp / anchor.peTrigger) * 100)) : 0;
+
+      const ceLeg: OobtstLegDetail = {
+        type: 'CE',
+        strike: anchor.ceStrike,
+        symbol: `NIFTY ${anchor.ceStrike} CE`,
+        openPrice: anchor.ceOpen,
+        triggerPrice: anchor.ceTrigger,
+        currentLtp: ceLtp,
+        progressPct: ceProgress,
+        status: 'SCANNING',
+        isProvisional: true,
+      };
+
+      const peLeg: OobtstLegDetail = {
+        type: 'PE',
+        strike: anchor.peStrike,
+        symbol: `NIFTY ${anchor.peStrike} PE`,
+        openPrice: anchor.peOpen,
+        triggerPrice: anchor.peTrigger,
+        currentLtp: peLtp,
+        progressPct: peProgress,
+        status: 'SCANNING',
+        isProvisional: true,
+      };
+
+      return {
+        currentStep: 1,
+        status: 'SCANNING',
+        statusBadgeText: 'PROVISIONAL_STRIKES',
+        expiryDate: expiryStr,
+        daysToExpiry,
+        niftySpot: spot,
+        anchorTime: '09:20:00 IST',
+        isLocked: false,
+        isProvisional: true,
+        isMarketClosed: false,
+        ceLeg,
+        peLeg,
+        activeLeg: null,
+        lastUpdated: nowTime,
+      };
+    }
+
+    // Case 3: Confirmed & Locked at or after 09:20:00 IST
     if (ceLtp > this.peakCeLtp) this.peakCeLtp = ceLtp;
     if (peLtp > this.peakPeLtp) this.peakPeLtp = peLtp;
 
-    const ceProgress = Math.min(100, Math.round((ceLtp / anchor.ceTrigger) * 100));
-    const peProgress = Math.min(100, Math.round((peLtp / anchor.peTrigger) * 100));
+    const ceProgress = anchor.ceTrigger > 0 ? Math.min(100, Math.round((ceLtp / anchor.ceTrigger) * 100)) : 0;
+    const peProgress = anchor.peTrigger > 0 ? Math.min(100, Math.round((peLtp / anchor.peTrigger) * 100)) : 0;
 
-    const isCeBreached = ceLtp >= anchor.ceTrigger || this.peakCeLtp >= anchor.ceTrigger;
-    const isPeBreached = peLtp >= anchor.peTrigger || this.peakPeLtp >= anchor.peTrigger;
+    const isCeBreached = anchor.ceTrigger > 0 && (ceLtp >= anchor.ceTrigger || this.peakCeLtp >= anchor.ceTrigger);
+    const isPeBreached = anchor.peTrigger > 0 && (peLtp >= anchor.peTrigger || this.peakPeLtp >= anchor.peTrigger);
 
     // Check if after 15:30 IST for BTST Overnight Hold
     const isAfter330 = (() => {
@@ -490,6 +688,9 @@ class NiftyOptionFeedService {
       daysToExpiry,
       niftySpot: spot,
       anchorTime: '09:20:00 IST',
+      isLocked: true,
+      isProvisional: false,
+      isMarketClosed: false,
       ceLeg,
       peLeg,
       activeLeg,
@@ -765,6 +966,8 @@ class NiftyOptionFeedService {
     this.cachedAnchor = null;
     this.peakCeLtp = 0;
     this.peakPeLtp = 0;
+    this.cachedLiveOptionChain = null;
+    this.lastOptionChainSyncTime = 0;
   }
 
   /**
