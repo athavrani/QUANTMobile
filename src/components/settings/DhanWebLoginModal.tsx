@@ -21,6 +21,7 @@ import * as Haptics from 'expo-haptics';
 import CryptoJS from 'crypto-js';
 import { colors } from '../../theme/colors';
 import { dhanPlainStorage } from '../../services/dhanPlainStorage';
+import { dhanDirectService } from '../../services/dhanDirectService';
 import { dhanWebStreamer } from '../../services/dhanWebStreamer';
 import { useRadarStore } from '../../store/useRadarStore';
 
@@ -343,6 +344,7 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
 
         // 1. Immediately save plain-text credentials in storage
         await dhanPlainStorage.save(clientId, token);
+        await dhanDirectService.saveCredentials(clientId, token);
 
         // 2. Notify parent Settings screen
         onSuccess(clientId, token);

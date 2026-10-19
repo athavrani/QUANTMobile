@@ -7,10 +7,11 @@ import {
   TouchableOpacity,
   ScrollView,
   ActivityIndicator,
-  Linking,
+  RefreshControl,
 } from 'react-native';
 import { colors } from '../../theme/colors';
 import { liveMarketService, LiveOptionChainSummary } from '../../services/liveMarketService';
+import { dhanDirectService } from '../../services/dhanDirectService';
 import * as Haptics from 'expo-haptics';
 
 interface Props {
@@ -29,6 +30,7 @@ export function LiveOptionChainModal({
   onClose,
 }: Props) {
   const [loading, setLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [chain, setChain] = useState<LiveOptionChainSummary | null>(null);
 
   useEffect(() => {
@@ -37,26 +39,27 @@ export function LiveOptionChainModal({
     }
   }, [visible, ticker, spotPrice]);
 
-  const loadOptionChain = async () => {
-    // Instant Black-Scholes calculation without artificial blocking spinner
+  const loadOptionChain = async (isManual = false) => {
+    if (isManual) {
+      setIsRefreshing(true);
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
     const data = await liveMarketService.fetchLiveOptionChain(ticker, spotPrice, strikeStep, true);
     setChain(data);
+    if (isManual) {
+      setIsRefreshing(false);
+    }
     setLoading(false);
   };
 
   const handleOpenBroker = (symbol: string) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    const kiteUrl = `kite://search?q=${encodeURIComponent(symbol)}`;
-    Linking.canOpenURL(kiteUrl).then((supported) => {
-      if (supported) {
-        Linking.openURL(kiteUrl);
-      } else {
-        Linking.openURL(`https://kite.zerodha.com`);
-      }
-    });
+    dhanDirectService.launchDhanApp(symbol);
   };
 
   if (!visible) return null;
+
+  const displaySpot = chain?.spotPrice || spotPrice;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -64,12 +67,18 @@ export function LiveOptionChainModal({
         <View style={styles.content}>
           {/* Header */}
           <View style={styles.header}>
-            <View>
+            <View style={{ flex: 1, marginRight: 8 }}>
               <View style={styles.titleRow}>
                 <Text style={styles.title}>{ticker} Live Option Chain</Text>
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>REAL-TIME</Text>
-                </View>
+                {chain?.isLiveMarketData ? (
+                  <View style={[styles.badge, styles.liveBadge]}>
+                    <Text style={styles.liveBadgeText}>🟢 LIVE DHAN</Text>
+                  </View>
+                ) : (
+                  <View style={[styles.badge, styles.estimatedBadge]}>
+                    <Text style={styles.estimatedBadgeText}>⚠️ THEORETICAL B-S</Text>
+                  </View>
+                )}
                 {chain?.rolledToNextExpiry && (
                   <View style={[styles.badge, styles.expiryRolloverBadge]}>
                     <Text style={styles.expiryRolloverBadgeText}>NEXT EXPIRY (BTST)</Text>
@@ -82,13 +91,26 @@ export function LiveOptionChainModal({
                 )}
               </View>
               <Text style={styles.sub}>
-                Spot: ₹{spotPrice.toFixed(2)} • Expiry: {chain?.expiryDate} {chain?.daysToExpiry ? `(${chain.daysToExpiry}d)` : ''}
+                Spot: ₹{displaySpot.toFixed(2)} • Expiry: {chain?.expiryDate} {chain?.daysToExpiry ? `(${chain.daysToExpiry}d)` : ''}
               </Text>
             </View>
 
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
-              <Text style={styles.closeText}>✕</Text>
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.refreshBtn}
+                onPress={() => loadOptionChain(true)}
+                disabled={isRefreshing}
+              >
+                {isRefreshing ? (
+                  <ActivityIndicator size="small" color={colors.cyan} />
+                ) : (
+                  <Text style={styles.refreshIcon}>🔄</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+                <Text style={styles.closeText}>✕</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* Expiry Day Notice Banner */}
@@ -105,6 +127,15 @@ export function LiveOptionChainModal({
             <View style={[styles.expiryNoticeBanner, styles.holidayNoticeBanner]}>
               <Text style={styles.holidayNoticeText}>
                 📅 <Text style={{ fontWeight: '800' }}>NSE HOLIDAY PREPONEMENT:</Text> Expiry preponed to {chain.expiryDate} because scheduled Tuesday was {chain.holidayReason || 'Exchange Holiday'}.
+              </Text>
+            </View>
+          )}
+
+          {/* Theoretical Notice Banner if Dhan token not streaming */}
+          {chain && !chain.isLiveMarketData && (
+            <View style={styles.offlineNoticeBanner}>
+              <Text style={styles.offlineNoticeText}>
+                ⚠️ <Text style={{ fontWeight: '800' }}>THEORETICAL ESTIMATION:</Text> Live Dhan HQ Option Chain unavailable (Market closed or Token unconfigured). To view tick-by-tick real quotes, verify Client ID & Token in Settings.
               </Text>
             </View>
           )}
@@ -163,7 +194,18 @@ export function LiveOptionChainModal({
               <Text style={styles.loadingText}>Streaming live options chain...</Text>
             </View>
           ) : (
-            <ScrollView style={styles.list} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.list}
+              showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={() => loadOptionChain(true)}
+                  tintColor={colors.cyan}
+                  colors={[colors.cyan]}
+                />
+              }
+            >
               {chain?.strikes.map((s) => {
                 const isAtm = s.moneyness === 'ATM';
                 const isOobtstCe = !!s.isOobtstCe;
@@ -284,6 +326,26 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
   },
+  liveBadge: {
+    backgroundColor: 'rgba(34, 197, 94, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(34, 197, 94, 0.4)',
+  },
+  liveBadgeText: {
+    color: '#22c55e',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  estimatedBadge: {
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.4)',
+  },
+  estimatedBadgeText: {
+    color: '#fbbf24',
+    fontSize: 8,
+    fontWeight: '800',
+  },
   expiryRolloverBadge: {
     backgroundColor: colors.warningGlow,
     borderWidth: 1,
@@ -319,6 +381,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  refreshBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.surfaceHover,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  refreshIcon: {
+    fontSize: 14,
+  },
   closeBtn: {
     width: 32,
     height: 32,
@@ -331,6 +409,19 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 16,
     fontWeight: '700',
+  },
+  offlineNoticeBanner: {
+    backgroundColor: 'rgba(234, 179, 8, 0.12)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(234, 179, 8, 0.3)',
+  },
+  offlineNoticeText: {
+    color: '#fbbf24',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600',
   },
   expiryNoticeBanner: {
     backgroundColor: colors.warningGlow,

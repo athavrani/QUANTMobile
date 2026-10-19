@@ -205,7 +205,12 @@ class NiftyOptionFeedService {
   private peakCeLtp: number = 0;
   private peakPeLtp: number = 0;
   private cachedLiveOptionChain: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }> | null = null;
+  private lastLiveSpot: number | null = null;
   private lastOptionChainSyncTime = 0;
+
+  public getLastLiveSpot(): number | null {
+    return this.lastLiveSpot;
+  }
 
   /**
    * Syncs live option chain directly from Dhan HQ API (/v2/optionchain)
@@ -214,8 +219,11 @@ class NiftyOptionFeedService {
     const { expiryDateYMD } = getActiveWeeklyExpiry(new Date(), true);
     try {
       const ocData = await dhanDirectService.fetchOptionChain(expiryDateYMD);
-      if (ocData && Object.keys(ocData).length > 0) {
-        this.cachedLiveOptionChain = ocData;
+      if (ocData && ocData.oc && Object.keys(ocData.oc).length > 0) {
+        this.cachedLiveOptionChain = ocData.oc;
+        if (ocData.spotPrice && ocData.spotPrice > 0) {
+          this.lastLiveSpot = ocData.spotPrice;
+        }
         this.lastOptionChainSyncTime = Date.now();
         return true;
       }
@@ -372,6 +380,12 @@ class NiftyOptionFeedService {
     range = 12,
     forOobtst = true
   ) {
+    // If passed spot is zero or default placeholder, fallback to live spot if available
+    let resolvedSpot = spot;
+    if ((!resolvedSpot || resolvedSpot <= 0 || resolvedSpot === 23146.15) && this.lastLiveSpot && this.lastLiveSpot > 0) {
+      resolvedSpot = this.lastLiveSpot;
+    }
+
     const {
       expiryStr,
       daysToExpiry,
@@ -382,25 +396,43 @@ class NiftyOptionFeedService {
       holidayReason,
       originalScheduledStr,
     } = getActiveWeeklyExpiry(new Date(), forOobtst);
-    const atm = Math.round(spot / step) * step;
-    const anchor = this.getOrCreateDayAnchor(spot);
+    const atm = Math.round(resolvedSpot / step) * step;
+    const anchor = this.getOrCreateDayAnchor(resolvedSpot);
 
     const strikes = [];
     let totalCallOi = 0;
     let totalPutOi = 0;
+    let liveQuoteCount = 0;
 
     for (let i = -range; i <= range; i++) {
       const strikePrice = atm + i * step;
       const moneyness: 'ITM' | 'ATM' | 'OTM' = i === 0 ? 'ATM' : i < 0 ? 'ITM' : 'OTM';
 
-      const callLtp = calculateBlackScholesPrice(spot, strikePrice, tYears, 'CE');
-      const putLtp = calculateBlackScholesPrice(spot, strikePrice, tYears, 'PE');
+      const live = this.cachedLiveOptionChain ? this.cachedLiveOptionChain[strikePrice] : undefined;
 
-      // Realistic institutional OI distribution around ATM
+      // Realistic institutional OI distribution fallback around ATM
       const distFromAtm = Math.abs(i);
       const baseOi = Math.round(65000 * Math.exp(-distFromAtm * 0.12));
-      const callOi = i >= 0 ? baseOi + 35000 : Math.round(baseOi * 0.6);
-      const putOi = i <= 0 ? baseOi + 38000 : Math.round(baseOi * 0.55);
+      const fallbackCallOi = i >= 0 ? baseOi + 35000 : Math.round(baseOi * 0.6);
+      const fallbackPutOi = i <= 0 ? baseOi + 38000 : Math.round(baseOi * 0.55);
+
+      let callLtp: number;
+      let putLtp: number;
+      let callOi: number;
+      let putOi: number;
+
+      if (live && (live.ceLtp > 0 || live.peLtp > 0 || live.ceOi > 0 || live.peOi > 0)) {
+        liveQuoteCount++;
+        callLtp = live.ceLtp > 0 ? live.ceLtp : calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'CE');
+        putLtp = live.peLtp > 0 ? live.peLtp : calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'PE');
+        callOi = live.ceOi > 0 ? live.ceOi : fallbackCallOi;
+        putOi = live.peOi > 0 ? live.peOi : fallbackPutOi;
+      } else {
+        callLtp = calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'CE');
+        putLtp = calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'PE');
+        callOi = fallbackCallOi;
+        putOi = fallbackPutOi;
+      }
 
       totalCallOi += callOi;
       totalPutOi += putOi;
@@ -425,10 +457,14 @@ class NiftyOptionFeedService {
     }
 
     const pcrRatio = totalCallOi > 0 ? +(totalPutOi / totalCallOi).toFixed(2) : 1.0;
+    const isLiveMarketData = liveQuoteCount > 0;
+    const dataSource: 'DHAN_LIVE' | 'BLACK_SCHOLES_FALLBACK' = isLiveMarketData
+      ? 'DHAN_LIVE'
+      : 'BLACK_SCHOLES_FALLBACK';
 
     return {
       underlying: 'NIFTY',
-      spotPrice: spot,
+      spotPrice: resolvedSpot,
       atmStrike: atm,
       expiryDate: expiryStr,
       daysToExpiry,
@@ -444,6 +480,9 @@ class NiftyOptionFeedService {
       oobtstPeStrike: anchor.peStrike,
       oobtstCeOpen: anchor.ceOpen,
       oobtstPeOpen: anchor.peOpen,
+      isLiveMarketData,
+      dataSource,
+      lastSyncTime: this.lastOptionChainSyncTime,
       strikes,
     };
   }

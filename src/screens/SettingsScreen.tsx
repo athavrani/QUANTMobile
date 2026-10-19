@@ -13,6 +13,7 @@ import {
 import { colors } from '../theme/colors';
 import { notificationService } from '../services/notificationService';
 import { dhanPlainStorage } from '../services/dhanPlainStorage';
+import { dhanDirectService } from '../services/dhanDirectService';
 import { dhanWebStreamer, testDhanWebStreamerConnection } from '../services/dhanWebStreamer';
 import { DhanWebLoginModal } from '../components/settings/DhanWebLoginModal';
 import { useRadarStore } from '../store/useRadarStore';
@@ -85,18 +86,20 @@ export function SettingsScreen() {
 
     setIsSaving(true);
     await dhanPlainStorage.save(dhanClientId, dhanAccessToken);
+    await dhanDirectService.saveCredentials(dhanClientId, dhanAccessToken);
     dhanWebStreamer.start();
     useRadarStore.getState().initStreamer();
     await useRadarStore.getState().refreshAll();
     setIsSaving(false);
     setIsConnected(true);
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('⚡ Live Data Active!', 'Dhan credentials saved in plain text (unencrypted). Live market feed is now streaming directly to all screens.');
+    Alert.alert('⚡ Live Data Active!', 'Dhan credentials saved. Live market feed and Option Chain are now streaming directly to all screens.');
   };
 
   const handleDisconnectDhan = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     await dhanPlainStorage.clear();
+    await dhanDirectService.clearCredentials();
     dhanWebStreamer.stop();
     setDhanClientId('');
     setDhanAccessToken('');

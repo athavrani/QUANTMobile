@@ -10,6 +10,7 @@ import { Linking } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { DHAN_BASE_URL, getDhanSecurityId, DHAN_NIFTY_INDEX_ID } from '../constants/dhanSecurityMaster';
 import { fetchFreeLiveQuotes } from './freeLiveMarketService';
+import { dhanPlainStorage } from './dhanPlainStorage';
 
 const STORAGE_KEY_CLIENT_ID = 'QM_DHAN_CLIENT_ID';
 const STORAGE_KEY_ACCESS_TOKEN = 'QM_DHAN_ACCESS_TOKEN';
@@ -55,6 +56,7 @@ class DhanDirectService {
 
   /**
    * Initializes stored credentials from secure hardware storage (Singleton Promise)
+   * Falls back to unencrypted dhanPlainStorage if hardware storage has not been populated
    */
   public async initialize(): Promise<void> {
     if (this.isInitialized) return;
@@ -66,10 +68,23 @@ class DhanDirectService {
           SecureStore.getItemAsync(STORAGE_KEY_CLIENT_ID),
           SecureStore.getItemAsync(STORAGE_KEY_ACCESS_TOKEN),
         ]);
-        this.cachedClientId = clientId?.trim() || null;
-        this.cachedAccessToken = accessToken?.trim() || null;
-        this.feedTelemetry.clientId = this.cachedClientId;
-        this.feedTelemetry.status = this.cachedClientId && this.cachedAccessToken ? 'ONLINE' : 'UNCONFIGURED';
+        let resolvedId = clientId?.trim() || null;
+        let resolvedToken = accessToken?.trim() || null;
+
+        if (!resolvedId || !resolvedToken) {
+          try {
+            const plain = await dhanPlainStorage.load();
+            if (plain.clientId && plain.token) {
+              resolvedId = plain.clientId.trim();
+              resolvedToken = plain.token.trim();
+            }
+          } catch {}
+        }
+
+        this.cachedClientId = resolvedId;
+        this.cachedAccessToken = resolvedToken;
+        this.feedTelemetry.clientId = resolvedId;
+        this.feedTelemetry.status = resolvedId && resolvedToken ? 'ONLINE' : 'UNCONFIGURED';
         this.isInitialized = true;
       } catch (err: any) {
         this.feedTelemetry.lastError = `Keystore init error: ${err.message}`;
@@ -117,6 +132,7 @@ class DhanDirectService {
     await Promise.all([
       SecureStore.setItemAsync(STORAGE_KEY_CLIENT_ID, cleanId),
       SecureStore.setItemAsync(STORAGE_KEY_ACCESS_TOKEN, cleanToken),
+      dhanPlainStorage.save(cleanId, cleanToken),
     ]);
     this.cachedClientId = cleanId;
     this.cachedAccessToken = cleanToken;
@@ -133,6 +149,7 @@ class DhanDirectService {
     await Promise.all([
       SecureStore.deleteItemAsync(STORAGE_KEY_CLIENT_ID),
       SecureStore.deleteItemAsync(STORAGE_KEY_ACCESS_TOKEN),
+      dhanPlainStorage.clear(),
     ]);
     this.cachedClientId = null;
     this.cachedAccessToken = null;
@@ -378,14 +395,65 @@ class DhanDirectService {
   }
 
   /**
+   * Fetches official active option chain expiry dates from Dhan HQ
+   * POST /v2/optionchain/expirylist
+   */
+  public async fetchExpiryList(): Promise<string[] | null> {
+    await this.initialize();
+    if (!this.cachedClientId || !this.cachedAccessToken) return null;
+
+    try {
+      const res = await fetch(`${DHAN_BASE_URL}/optionchain/expirylist`, {
+        method: 'POST',
+        headers: {
+          'access-token': this.cachedAccessToken,
+          'client-id': this.cachedClientId,
+          'dhanClientId': this.cachedClientId,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          UnderlyingScrip: parseInt(DHAN_NIFTY_INDEX_ID, 10),
+          UnderlyingSeg: 'IDX_I',
+        }),
+      });
+
+      if (!res.ok) return null;
+
+      const json = await res.json();
+      if (Array.isArray(json?.data) && json.data.length > 0) {
+        return json.data;
+      }
+    } catch {}
+    return null;
+  }
+
+  /**
    * Fetches the official live Dhan HQ Option Chain for NIFTY Index
    * Direct POST to /v2/optionchain
    */
   public async fetchOptionChain(
-    expiryDate: string
-  ): Promise<Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }> | null> {
+    expiryDate?: string
+  ): Promise<{
+    spotPrice?: number;
+    oc: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }>;
+  } | null> {
     await this.initialize();
     if (!this.cachedClientId || !this.cachedAccessToken) return null;
+
+    let targetExpiry = expiryDate;
+    const list = await this.fetchExpiryList();
+    if (list && list.length > 0) {
+      if (targetExpiry) {
+        const exp = targetExpiry;
+        const matched = list.find((d) => d === exp || d.startsWith(exp));
+        targetExpiry = matched || list[0];
+      } else {
+        targetExpiry = list[0];
+      }
+    }
+
+    if (!targetExpiry) return null;
 
     try {
       const res = await fetch(`${DHAN_BASE_URL}/optionchain`, {
@@ -395,12 +463,12 @@ class DhanDirectService {
           'client-id': this.cachedClientId,
           'dhanClientId': this.cachedClientId,
           'Content-Type': 'application/json',
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
         body: JSON.stringify({
           UnderlyingScrip: parseInt(DHAN_NIFTY_INDEX_ID, 10),
           UnderlyingSeg: 'IDX_I',
-          Expiry: expiryDate,
+          Expiry: targetExpiry,
         }),
       });
 
@@ -422,7 +490,8 @@ class DhanDirectService {
           };
         }
       }
-      return Object.keys(result).length > 0 ? result : null;
+      const spotPrice = json?.data?.last_price ? Number(json.data.last_price) : undefined;
+      return Object.keys(result).length > 0 ? { spotPrice, oc: result } : null;
     } catch {
       return null;
     }

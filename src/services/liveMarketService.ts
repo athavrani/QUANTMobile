@@ -1,5 +1,6 @@
 import { API_CONFIG } from '../config/apiConfig';
 import { niftyOptionFeedService } from './niftyOptionFeedService';
+import { dhanDirectService } from './dhanDirectService';
 
 export interface OptionStrikeRow {
   strikePrice: number;
@@ -33,10 +34,14 @@ export interface LiveOptionChainSummary {
   rolledToNextExpiry?: boolean;
   wasPreponed?: boolean;
   holidayReason?: string;
+  originalScheduledStr?: string;
   oobtstCeStrike?: number;
   oobtstPeStrike?: number;
   oobtstCeOpen?: number;
   oobtstPeOpen?: number;
+  isLiveMarketData?: boolean;
+  dataSource?: 'DHAN_LIVE' | 'BLACK_SCHOLES_FALLBACK';
+  lastSyncTime?: number;
   strikes: OptionStrikeRow[];
 }
 
@@ -86,30 +91,49 @@ export const liveMarketService = {
     return {};
   },
 
-  // 2. Fetch live multi-strike option chain for Index or Stock with 0ms latency & instant Black-Scholes
+  // 2. Fetch live multi-strike option chain directly from Dhan HQ with seamless fallback
   async fetchLiveOptionChain(
     ticker: string = 'NIFTY',
     spotLtp: number = 23146.15,
     strikeStep: number = 50,
     forOobtst: boolean = true
   ): Promise<LiveOptionChainSummary> {
-    // 1. Instant institutional Black-Scholes option chain calculation (0ms latency)
+    // 1. Sync live option chain from Dhan HQ API if available
+    try {
+      await niftyOptionFeedService.syncLiveOptionChain();
+    } catch {}
+
+    // 2. Resolve live spot price if passed value is fallback/zero
+    let resolvedSpot = spotLtp;
+    const lastLiveSpot = niftyOptionFeedService.getLastLiveSpot();
+    if (lastLiveSpot && lastLiveSpot > 0 && (!resolvedSpot || resolvedSpot <= 0 || resolvedSpot === 23146.15)) {
+      resolvedSpot = lastLiveSpot;
+    } else if (!resolvedSpot || resolvedSpot <= 0 || resolvedSpot === 23146.15) {
+      try {
+        const quote = await dhanDirectService.fetchNiftyIndexQuote();
+        if (quote && quote.ltp > 0) {
+          resolvedSpot = quote.ltp;
+        }
+      } catch {}
+    }
+
+    // 3. Generate option chain matrix overlaid with live Dhan exchange data
     const localMatrix = niftyOptionFeedService.generateLiveOptionChainMatrix(
-      spotLtp,
+      resolvedSpot,
       strikeStep,
       12,
       forOobtst
     );
 
-    // 2. Only attempt remote backend if an external gateway is explicitly configured
-    if (process.env.EXPO_PUBLIC_API_URL) {
+    // 4. Remote backend fallback if external gateway is configured
+    if (process.env.EXPO_PUBLIC_API_URL && !localMatrix.isLiveMarketData) {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 600);
         const res = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.OPTION_CHAIN}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticker, spotLtp, strikeStep }),
+          body: JSON.stringify({ ticker, spotLtp: resolvedSpot, strikeStep }),
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
