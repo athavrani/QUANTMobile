@@ -100,7 +100,7 @@ export const liveMarketService = {
   ): Promise<LiveOptionChainSummary> {
     // 1. Sync live option chain from Dhan HQ API if available
     try {
-      await niftyOptionFeedService.syncLiveOptionChain();
+      await niftyOptionFeedService.syncLiveOptionChain(ticker);
     } catch {}
 
     // 2. Resolve live spot price if passed value is fallback/zero

@@ -18,6 +18,7 @@ export interface StockRadarItem {
   sector?: string;
   indices: ('NIFTY 50' | 'SENSEX')[];
   spotPrice: number;
+  prevClose?: number;
   dayOpen: number;
   dayHigh: number;
   dayLow: number;

@@ -35,10 +35,10 @@ class DhanWebStreamer {
   private tickListeners = new Set<TickListener>();
   private telemetryListeners = new Set<TelemetryListener>();
 
-  // 100ms Micro-Batch Buffer to maintain 60 FPS in React Native
+  // 250ms Micro-Batch Buffer (4 updates/sec) to keep JS thread and gestures 100% responsive
   private pendingTickBatch = new Map<string, DhanLiveTickData>();
   private flushTimer: NodeJS.Timeout | null = null;
-  private readonly THROTTLE_MS = 100;
+  private readonly THROTTLE_MS = 250;
 
   // Auto-reconnect with exponential backoff
   private reconnectAttempts = 0;

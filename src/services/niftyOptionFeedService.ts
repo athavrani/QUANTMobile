@@ -215,10 +215,10 @@ class NiftyOptionFeedService {
   /**
    * Syncs live option chain directly from Dhan HQ API (/v2/optionchain)
    */
-  public async syncLiveOptionChain(): Promise<boolean> {
+  public async syncLiveOptionChain(ticker: string = 'NIFTY'): Promise<boolean> {
     const { expiryDateYMD } = getActiveWeeklyExpiry(new Date(), true);
     try {
-      const ocData = await dhanDirectService.fetchOptionChain(expiryDateYMD);
+      const ocData = await dhanDirectService.fetchOptionChain(expiryDateYMD, ticker);
       if (ocData && ocData.oc && Object.keys(ocData.oc).length > 0) {
         this.cachedLiveOptionChain = ocData.oc;
         if (ocData.spotPrice && ocData.spotPrice > 0) {

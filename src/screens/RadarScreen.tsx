@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,6 @@ import { useRadarStore } from '../store/useRadarStore';
 import { StockRadarItem } from '../types/mobile';
 import { TacticalStrikeModal } from '../components/radar/TacticalStrikeModal';
 import { LiveOptionChainModal } from '../components/options/LiveOptionChainModal';
-import { dhanDirectService } from '../services/dhanDirectService';
 import * as Haptics from 'expo-haptics';
 
 type FilterType = 'ALL' | 'NIFTY50' | 'SENSEX' | 'GREEN' | 'RED' | 'NEAR';
@@ -22,67 +21,31 @@ interface RadarScreenProps {
   onNavigateToSignals?: () => void;
 }
 
-export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
-  const {
-    stocks,
-    selectedStock,
-    tacticalStrike,
-    feedStatus,
-    lastTickTime,
-    isRefreshing,
-    refreshAll,
-    selectStock,
-    clearSelectedStock,
-  } = useRadarStore();
+// Helper to format shares in Indian numbering format (Lakhs & Crores)
+function formatShares(val: number): string {
+  if (val >= 10000000) return `${(val / 10000000).toFixed(2)} Cr`;
+  if (val >= 100000) return `${(val / 100000).toFixed(2)} L`;
+  if (val >= 1000) return `${(val / 1000).toFixed(1)}k`;
+  return val.toLocaleString('en-IN');
+}
 
-  const [filter, setFilter] = useState<FilterType>('ALL');
-  const [search, setSearch] = useState('');
-  const [chainStock, setChainStock] = useState<StockRadarItem | null>(null);
+interface StockCardProps {
+  item: StockRadarItem;
+  onSelect: (item: StockRadarItem) => void;
+}
 
-  const handleRefresh = async () => {
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await refreshAll(true);
-  };
-
-  const handleSelect = (stock: StockRadarItem) => {
-    Haptics.selectionAsync();
-    selectStock(stock.ticker);
-  };
-
-  // Helper to format shares in Indian numbering format (Lakhs & Crores)
-  const formatShares = (val: number): string => {
-    if (val >= 10000000) return `${(val / 10000000).toFixed(2)} Cr`;
-    if (val >= 100000) return `${(val / 100000).toFixed(2)} L`;
-    if (val >= 1000) return `${(val / 1000).toFixed(1)}k`;
-    return val.toLocaleString('en-IN');
-  };
-
-  const filteredStocks = stocks.filter((stock) => {
-    const matchesSearch =
-      stock.ticker.toLowerCase().includes(search.toLowerCase()) ||
-      stock.name.toLowerCase().includes(search.toLowerCase()) ||
-      (stock.sector && stock.sector.toLowerCase().includes(search.toLowerCase()));
-
-    if (!matchesSearch) return false;
-
-    if (filter === 'NIFTY50') return stock.indices.includes('NIFTY 50');
-    if (filter === 'SENSEX') return stock.indices.includes('SENSEX');
-    if (filter === 'GREEN') return stock.circleIndicator === 'GREEN';
-    if (filter === 'RED') return stock.circleIndicator === 'RED';
-    if (filter === 'NEAR') return stock.circleIndicator === 'AMBER';
-
-    return true;
-  });
-
-  const greenCount = stocks.filter((s) => s.circleIndicator === 'GREEN').length;
-  const redCount = stocks.filter((s) => s.circleIndicator === 'RED').length;
-  const nearCount = stocks.filter((s) => s.circleIndicator === 'AMBER').length;
-
-  const renderStockItem = ({ item }: { item: StockRadarItem }) => {
+// Memoized Card: Only re-renders if this specific stock's live tick values changed
+const StockCard = React.memo(
+  function StockCard({ item, onSelect }: StockCardProps) {
     const ratioPercent = Math.min(150, Math.round(item.volumeRatio * 100));
     const isBullish = item.percentChange >= 0;
+    const isPositive = item.percentChange > 0;
+    const isNegative = item.percentChange < 0;
+    const pctColor = isPositive ? colors.bullish : (isNegative ? colors.bearish : colors.textMuted);
+    const formattedPercent = isPositive
+      ? `+${item.percentChange.toFixed(2)}%`
+      : `${item.percentChange.toFixed(2)}%`;
 
-    // Circle color & tone
     let circleIcon = '⚪';
     let circleTone = colors.textMuted;
     let circleLabel = 'SCANNING';
@@ -109,7 +72,7 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
           item.circleIndicator === 'RED' && styles.redCardBorder,
         ]}
         activeOpacity={0.7}
-        onPress={() => handleSelect(item)}
+        onPress={() => onSelect(item)}
       >
         {/* Top Row: Circle Indicator, Ticker, Names, and LTP */}
         <View style={styles.cardHeader}>
@@ -132,8 +95,8 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
 
           <View style={styles.priceGroup}>
             <Text style={styles.price}>₹{item.spotPrice.toFixed(2)}</Text>
-            <Text style={[styles.percent, { color: isBullish ? colors.bullish : colors.bearish }]}>
-              {isBullish ? `+${item.percentChange}%` : `${item.percentChange}%`}
+            <Text style={[styles.percent, { color: pctColor }]}>
+              {formattedPercent}
             </Text>
           </View>
         </View>
@@ -187,7 +150,90 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
         </View>
       </TouchableOpacity>
     );
-  };
+  },
+  (prev, next) =>
+    prev.item.spotPrice === next.item.spotPrice &&
+    prev.item.percentChange === next.item.percentChange &&
+    prev.item.todayTradedShares === next.item.todayTradedShares &&
+    prev.item.volumeRatio === next.item.volumeRatio &&
+    prev.item.circleIndicator === next.item.circleIndicator
+);
+
+export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
+  // Fine-grained Zustand selectors to prevent unnecessary re-renders
+  const stocks = useRadarStore((s) => s.stocks);
+  const selectedStock = useRadarStore((s) => s.selectedStock);
+  const tacticalStrike = useRadarStore((s) => s.tacticalStrike);
+  const feedStatus = useRadarStore((s) => s.feedStatus);
+  const lastTickTime = useRadarStore((s) => s.lastTickTime);
+  const isRefreshing = useRadarStore((s) => s.isRefreshing);
+  const refreshAll = useRadarStore((s) => s.refreshAll);
+  const selectStock = useRadarStore((s) => s.selectStock);
+  const clearSelectedStock = useRadarStore((s) => s.clearSelectedStock);
+
+  const [filter, setFilter] = useState<FilterType>('ALL');
+  const [search, setSearch] = useState('');
+  const [chainStock, setChainStock] = useState<StockRadarItem | null>(null);
+
+  const handleRefresh = useCallback(async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await refreshAll(true);
+  }, [refreshAll]);
+
+  const handleSelect = useCallback((stock: StockRadarItem) => {
+    Haptics.selectionAsync();
+    selectStock(stock.ticker);
+  }, [selectStock]);
+
+  const handleFilterPress = useCallback((f: FilterType) => {
+    Haptics.selectionAsync();
+    setFilter(f);
+  }, []);
+
+  // Memoized stock filtering: runs only when filter, search or stocks array changes
+  const filteredStocks = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return stocks.filter((stock) => {
+      if (s) {
+        const matches =
+          stock.ticker.toLowerCase().includes(s) ||
+          stock.name.toLowerCase().includes(s) ||
+          (stock.sector && stock.sector.toLowerCase().includes(s));
+        if (!matches) return false;
+      }
+
+      if (filter === 'NIFTY50') return stock.indices.includes('NIFTY 50');
+      if (filter === 'SENSEX') return stock.indices.includes('SENSEX');
+      if (filter === 'GREEN') return stock.circleIndicator === 'GREEN';
+      if (filter === 'RED') return stock.circleIndicator === 'RED';
+      if (filter === 'NEAR') return stock.circleIndicator === 'AMBER';
+
+      return true;
+    });
+  }, [stocks, search, filter]);
+
+  // Single-pass O(N) counts calculation instead of 3 separate full-array .filter() passes
+  const { greenCount, redCount, nearCount } = useMemo(() => {
+    let green = 0;
+    let red = 0;
+    let near = 0;
+    for (let i = 0; i < stocks.length; i++) {
+      const ind = stocks[i].circleIndicator;
+      if (ind === 'GREEN') green++;
+      else if (ind === 'RED') red++;
+      else if (ind === 'AMBER') near++;
+    }
+    return { greenCount: green, redCount: red, nearCount: near };
+  }, [stocks]);
+
+  const renderStockItem = useCallback(
+    ({ item }: { item: StockRadarItem }) => (
+      <StockCard item={item} onSelect={handleSelect} />
+    ),
+    [handleSelect]
+  );
+
+  const keyExtractor = useCallback((item: StockRadarItem) => item.ticker, []);
 
   return (
     <View style={styles.container}>
@@ -251,7 +297,7 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
       <View style={styles.filterBar}>
         <TouchableOpacity
           style={[styles.filterChip, filter === 'ALL' && styles.filterChipActive]}
-          onPress={() => setFilter('ALL')}
+          onPress={() => handleFilterPress('ALL')}
         >
           <Text style={[styles.filterText, filter === 'ALL' && styles.filterTextActive]}>
             All ({stocks.length})
@@ -260,7 +306,7 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
 
         <TouchableOpacity
           style={[styles.filterChip, filter === 'NIFTY50' && styles.filterChipActive]}
-          onPress={() => setFilter('NIFTY50')}
+          onPress={() => handleFilterPress('NIFTY50')}
         >
           <Text style={[styles.filterText, filter === 'NIFTY50' && styles.filterTextActive]}>
             NIFTY 50
@@ -269,7 +315,7 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
 
         <TouchableOpacity
           style={[styles.filterChip, filter === 'SENSEX' && styles.filterChipActive]}
-          onPress={() => setFilter('SENSEX')}
+          onPress={() => handleFilterPress('SENSEX')}
         >
           <Text style={[styles.filterText, filter === 'SENSEX' && styles.filterTextActive]}>
             SENSEX
@@ -278,7 +324,7 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
 
         <TouchableOpacity
           style={[styles.filterChip, filter === 'GREEN' && styles.filterChipActiveGreen]}
-          onPress={() => setFilter('GREEN')}
+          onPress={() => handleFilterPress('GREEN')}
         >
           <Text style={[styles.filterText, filter === 'GREEN' && styles.filterTextActiveGreen]}>
             🟢 Buy ({greenCount})
@@ -287,16 +333,16 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
 
         <TouchableOpacity
           style={[styles.filterChip, filter === 'RED' && styles.filterChipActiveRed]}
-          onPress={() => setFilter('RED')}
+          onPress={() => handleFilterPress('RED')}
         >
-          <Text style={[styles.filterText, filter === 'RED' && styles.filterTextActiveRed]}>
+          <Text style={[styles.filterText, filter === 'RED' && styles.filterChipActiveRed]}>
             🔴 Sell ({redCount})
           </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
           style={[styles.filterChip, filter === 'NEAR' && styles.filterChipActiveAmber]}
-          onPress={() => setFilter('NEAR')}
+          onPress={() => handleFilterPress('NEAR')}
         >
           <Text style={[styles.filterText, filter === 'NEAR' && styles.filterTextActiveAmber]}>
             🟡 Near ({nearCount})
@@ -307,9 +353,13 @@ export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
       {/* Screener Stock List */}
       <FlatList
         data={filteredStocks}
-        keyExtractor={(item) => item.ticker}
+        keyExtractor={keyExtractor}
         renderItem={renderStockItem}
         contentContainerStyle={styles.listContent}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        removeClippedSubviews={true}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}

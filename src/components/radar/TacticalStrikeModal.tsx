@@ -105,8 +105,22 @@ export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewO
             <View style={styles.spotBox}>
               <View style={styles.spotRow}>
                 <Text style={styles.spotLtp}>₹{stock.spotPrice.toFixed(2)}</Text>
-                <Text style={[styles.spotPercent, { color: stock.percentChange >= 0 ? colors.bullish : colors.bearish }]}>
-                  {stock.percentChange >= 0 ? `+${stock.percentChange}%` : `${stock.percentChange}%`}
+                <Text
+                  style={[
+                    styles.spotPercent,
+                    {
+                      color:
+                        stock.percentChange > 0
+                          ? colors.bullish
+                          : stock.percentChange < 0
+                          ? colors.bearish
+                          : colors.textMuted,
+                    },
+                  ]}
+                >
+                  {stock.percentChange > 0
+                    ? `+${stock.percentChange.toFixed(2)}%`
+                    : `${stock.percentChange.toFixed(2)}%`}
                 </Text>
               </View>
               <Text style={styles.openText}>Day Open: ₹{stock.dayOpen.toFixed(2)} • Direction: {isBullish ? '▲ Bullish' : '▼ Bearish'}</Text>

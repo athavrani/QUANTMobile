@@ -279,12 +279,14 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
     // 4. Register high-frequency 100ms micro-batch tick listener
     dhanWebStreamer.addTickListener((tickBatch) => {
       let hasChanged = false;
+      let spotChanged = false;
       let newNiftySpot = get().niftySpot;
 
       // Check if NIFTY spot tick arrived
       const indexTick = tickBatch[DHAN_NIFTY_INDEX_ID] || tickBatch[`${DHAN_NIFTY_INDEX_ID}-I-IDX`];
       if (indexTick && indexTick.ltp > 0 && indexTick.ltp !== newNiftySpot) {
         newNiftySpot = indexTick.ltp;
+        spotChanged = true;
         hasChanged = true;
       }
 
@@ -293,11 +295,13 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
 
       // Map ticks across constituent stocks if any are loaded
       if (currentStocks.length > 0) {
-        updatedStocks = currentStocks.map((stock) => {
+        let stockTickFound = false;
+        const nextStocks = currentStocks.map((stock) => {
           const secId = getDhanSecurityId(stock.ticker);
           const tick = tickBatch[secId] || tickBatch[`${secId}-E-NSE`];
           if (!tick || tick.ltp <= 0) return stock;
 
+          stockTickFound = true;
           hasChanged = true;
           const spotPrice = tick.ltp;
           const dayOpen = tick.open > 0 ? tick.open : stock.dayOpen;
@@ -307,9 +311,19 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
           const avgShares = stock.avg20DTradedShares || 1;
           const ratio = +(todayTradedShares / avgShares).toFixed(3);
           const hasCrossed = todayTradedShares >= avgShares && todayTradedShares > 0;
-          const isBullish = spotPrice >= dayOpen;
-          const close = tick.close > 0 ? tick.close : stock.dayOpen;
-          const pctChange = close > 0 ? +(((spotPrice - close) / close) * 100).toFixed(2) : 0;
+
+          // Determine accurate baseline for percentage change calculation
+          // Priority: stock.prevClose > dayOpen > spotPrice
+          const prevClose = (stock.prevClose && stock.prevClose > 0)
+            ? stock.prevClose
+            : (dayOpen > 0 ? dayOpen : spotPrice);
+
+          // Use tick.changePercent if provided by streamer, else compute dynamically from live spotPrice against prevClose
+          const pctChange = tick.changePercent !== undefined && tick.changePercent !== 0
+            ? tick.changePercent
+            : (prevClose > 0 ? +(((spotPrice - prevClose) / prevClose) * 100).toFixed(2) : 0);
+
+          const isBullish = pctChange >= 0 || spotPrice >= dayOpen;
 
           let circleIndicator: 'GREEN' | 'RED' | 'AMBER' | 'GREY' = 'GREY';
           if (hasCrossed) {
@@ -321,6 +335,7 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
           return {
             ...stock,
             spotPrice,
+            prevClose,
             dayOpen,
             dayHigh,
             dayLow,
@@ -334,20 +349,30 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
             circleIndicator,
           };
         });
+
+        if (stockTickFound) {
+          updatedStocks = nextStocks;
+        }
       }
 
       if (hasChanged) {
         const nowTime = new Date().toLocaleTimeString('en-IN');
-        const liveOobtst = niftyOptionFeedService.evaluateOobtst(newNiftySpot, get().istTime || nowTime);
-        const liveBreakout = niftyOptionFeedService.evaluateBreakout180(newNiftySpot, get().istTime || nowTime);
-        set({
-          stocks: updatedStocks,
-          niftySpot: newNiftySpot,
-          oobtstState: liveOobtst,
-          niftyBreakout180: liveBreakout,
+        const stateUpdates: Partial<RadarStoreState> = {
           feedStatus: 'ONLINE',
           lastTickTime: nowTime,
-        });
+        };
+
+        if (updatedStocks !== currentStocks) {
+          stateUpdates.stocks = updatedStocks;
+        }
+
+        if (spotChanged) {
+          stateUpdates.niftySpot = newNiftySpot;
+          stateUpdates.oobtstState = niftyOptionFeedService.evaluateOobtst(newNiftySpot, get().istTime || nowTime);
+          stateUpdates.niftyBreakout180 = niftyOptionFeedService.evaluateBreakout180(newNiftySpot, get().istTime || nowTime);
+        }
+
+        set(stateUpdates);
       }
     });
 

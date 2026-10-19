@@ -8,7 +8,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { Linking } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { DHAN_BASE_URL, getDhanSecurityId, DHAN_NIFTY_INDEX_ID } from '../constants/dhanSecurityMaster';
+import { DHAN_BASE_URL, getDhanSecurityId, DHAN_NIFTY_INDEX_ID, DHAN_SENSEX_INDEX_ID } from '../constants/dhanSecurityMaster';
 import { fetchFreeLiveQuotes } from './freeLiveMarketService';
 import { dhanPlainStorage } from './dhanPlainStorage';
 
@@ -394,13 +394,32 @@ class DhanDirectService {
     return quotes;
   }
 
+  // 3-second cache to strictly observe Dhan rate limits (1 request per 3 seconds per underlying)
+  private optionChainCache = new Map<string, { timestamp: number; data: any }>();
+
   /**
    * Fetches official active option chain expiry dates from Dhan HQ
    * POST /v2/optionchain/expirylist
    */
-  public async fetchExpiryList(): Promise<string[] | null> {
+  public async fetchExpiryList(underlyingTicker: string = 'NIFTY'): Promise<string[] | null> {
     await this.initialize();
     if (!this.cachedClientId || !this.cachedAccessToken) return null;
+
+    let scrip = parseInt(DHAN_NIFTY_INDEX_ID, 10);
+    let seg = 'IDX_I';
+    const cleanTicker = (underlyingTicker || 'NIFTY').toUpperCase().trim();
+
+    if (cleanTicker === 'SENSEX') {
+      scrip = parseInt(DHAN_SENSEX_INDEX_ID, 10);
+      seg = 'IDX_I';
+    } else if (cleanTicker !== 'NIFTY' && cleanTicker !== 'NIFTY 50') {
+      const secId = getDhanSecurityId(cleanTicker);
+      const parsed = parseInt(secId, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        scrip = parsed;
+        seg = 'NSE_EQ';
+      }
+    }
 
     try {
       const res = await fetch(`${DHAN_BASE_URL}/optionchain/expirylist`, {
@@ -413,12 +432,18 @@ class DhanDirectService {
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          UnderlyingScrip: parseInt(DHAN_NIFTY_INDEX_ID, 10),
-          UnderlyingSeg: 'IDX_I',
+          UnderlyingScrip: scrip,
+          UnderlyingSeg: seg,
         }),
       });
 
-      if (!res.ok) return null;
+      if (!res.ok) {
+        if (res.status === 401) {
+          this.feedTelemetry.status = 'ERROR';
+          this.feedTelemetry.lastError = 'Dhan Token Expired (401). Tap Auto Sync in Settings.';
+        }
+        return null;
+      }
 
       const json = await res.json();
       if (Array.isArray(json?.data) && json.data.length > 0) {
@@ -429,11 +454,12 @@ class DhanDirectService {
   }
 
   /**
-   * Fetches the official live Dhan HQ Option Chain for NIFTY Index
+   * Fetches the official live Dhan HQ Option Chain for Indices and Equities
    * Direct POST to /v2/optionchain
    */
   public async fetchOptionChain(
-    expiryDate?: string
+    expiryDate?: string,
+    underlyingTicker: string = 'NIFTY'
   ): Promise<{
     spotPrice?: number;
     oc: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }>;
@@ -441,8 +467,31 @@ class DhanDirectService {
     await this.initialize();
     if (!this.cachedClientId || !this.cachedAccessToken) return null;
 
+    const cleanTicker = (underlyingTicker || 'NIFTY').toUpperCase().trim();
+    let scrip = parseInt(DHAN_NIFTY_INDEX_ID, 10);
+    let seg = 'IDX_I';
+
+    if (cleanTicker === 'SENSEX') {
+      scrip = parseInt(DHAN_SENSEX_INDEX_ID, 10);
+      seg = 'IDX_I';
+    } else if (cleanTicker !== 'NIFTY' && cleanTicker !== 'NIFTY 50') {
+      const secId = getDhanSecurityId(cleanTicker);
+      const parsed = parseInt(secId, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        scrip = parsed;
+        seg = 'NSE_EQ';
+      }
+    }
+
+    // Check 3-second cache
+    const cacheKey = `${scrip}-${seg}-${expiryDate || 'default'}`;
+    const cached = this.optionChainCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < 3000) {
+      return cached.data;
+    }
+
     let targetExpiry = expiryDate;
-    const list = await this.fetchExpiryList();
+    const list = await this.fetchExpiryList(cleanTicker);
     if (list && list.length > 0) {
       if (targetExpiry) {
         const exp = targetExpiry;
@@ -466,13 +515,19 @@ class DhanDirectService {
           Accept: 'application/json',
         },
         body: JSON.stringify({
-          UnderlyingScrip: parseInt(DHAN_NIFTY_INDEX_ID, 10),
-          UnderlyingSeg: 'IDX_I',
+          UnderlyingScrip: scrip,
+          UnderlyingSeg: seg,
           Expiry: targetExpiry,
         }),
       });
 
-      if (!res.ok) return null;
+      if (!res.ok) {
+        if (res.status === 401) {
+          this.feedTelemetry.status = 'ERROR';
+          this.feedTelemetry.lastError = 'Dhan Token Expired (401). Tap Auto Sync in Settings.';
+        }
+        return null;
+      }
 
       const json = await res.json();
       const oc = json?.data?.oc;
@@ -491,7 +546,13 @@ class DhanDirectService {
         }
       }
       const spotPrice = json?.data?.last_price ? Number(json.data.last_price) : undefined;
-      return Object.keys(result).length > 0 ? { spotPrice, oc: result } : null;
+      const finalResult = Object.keys(result).length > 0 ? { spotPrice, oc: result } : null;
+
+      if (finalResult) {
+        this.optionChainCache.set(cacheKey, { timestamp: Date.now(), data: finalResult });
+      }
+
+      return finalResult;
     } catch {
       return null;
     }

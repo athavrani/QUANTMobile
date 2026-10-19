@@ -51,41 +51,164 @@ function decryptDhanStorage(cipherTextBase64: string): string {
   }
 }
 
-// Universal parser for both raw network JSON and AES-encrypted storage values
-function tryExtractCredentials(raw: any): { clientId: string; token: string; name: string } | null {
-  if (!raw) return null;
-  let data: any = raw;
+const JWT_REGEX = /eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+/g;
 
+function decodeJwtPayload(jwt: string): any {
+  try {
+    const parts = jwt.split('.');
+    if (parts.length < 2) return null;
+    let b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) {
+      b64 += '=';
+    }
+    const decodedStr = CryptoJS.enc.Base64.parse(b64).toString(CryptoJS.enc.Utf8);
+    if (!decodedStr) return null;
+    return JSON.parse(decodedStr);
+  } catch {
+    return null;
+  }
+}
+
+// Universal parser for raw network JSON, AES-encrypted storage values, cookies, URLs, and JWTs
+function tryExtractCredentials(raw: any, depth = 0): { clientId: string; token: string; name: string } | null {
+  if (!raw || depth > 5) return null;
+
+  // Case 1: Plain string input
   if (typeof raw === 'string') {
-    // If it's encrypted ciphertext (Base64), decrypt it first
-    if (!raw.startsWith('{') && !raw.startsWith('[')) {
-      const dec = decryptDhanStorage(raw);
-      if (dec) {
-        try {
-          data = JSON.parse(dec);
-        } catch {
-          if (dec.startsWith('eyJ')) {
-            return { clientId: '1113940120', token: dec, name: 'Dhan Trader' };
-          }
-        }
+    const trimmed = raw.trim();
+
+    // 1A. Check if string directly contains a JWT
+    const jwtMatches = trimmed.match(JWT_REGEX);
+    if (jwtMatches && jwtMatches.length > 0) {
+      for (const jwt of jwtMatches) {
+        const payload = decodeJwtPayload(jwt);
+        const clientId =
+          payload?.dhanClientId ||
+          payload?.clientId ||
+          payload?.client_id ||
+          payload?.dhan_client_id ||
+          payload?.login_id ||
+          payload?.entity_id ||
+          payload?.sub ||
+          payload?.userId;
+        const name = payload?.name || payload?.client_name || payload?.user_name || 'Dhan Trader';
+        return {
+          clientId: clientId ? String(clientId) : '1113940120',
+          token: jwt,
+          name: String(name),
+        };
       }
-    } else {
+    }
+
+    // 1B. Check if string is encrypted ciphertext (Dhan Web uses AES-128-CBC)
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
+      const dec = decryptDhanStorage(trimmed);
+      if (dec && dec !== trimmed) {
+        const creds = tryExtractCredentials(dec, depth + 1);
+        if (creds) return creds;
+      }
+    }
+
+    // 1C. Check if string is JSON
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
       try {
-        data = JSON.parse(raw);
+        const parsed = JSON.parse(trimmed);
+        const creds = tryExtractCredentials(parsed, depth + 1);
+        if (creds) return creds;
       } catch {}
     }
+
+    // 1D. Check if string is cookie-formatted ("a=b; c=d")
+    if (trimmed.includes('=')) {
+      const pairs = trimmed.split(';');
+      for (const pair of pairs) {
+        const eqIdx = pair.indexOf('=');
+        if (eqIdx !== -1) {
+          const val = pair.slice(eqIdx + 1).trim();
+          const creds = tryExtractCredentials(val, depth + 1);
+          if (creds) return creds;
+        }
+      }
+    }
+
+    // 1E. If it's a raw token string of sufficient length (> 30 chars and not markup/script)
+    if (trimmed.length > 30 && !trimmed.includes(' ') && !trimmed.includes('<') && !trimmed.includes('{')) {
+      return { clientId: '1113940120', token: trimmed, name: 'Dhan Trader' };
+    }
+
+    return null;
   }
 
-  if (data && typeof data === 'object') {
-    const payload = data.data && typeof data.data === 'object' ? data.data : data;
-    const token = payload.token_id || payload.jwt || payload.token || payload.TxnToken || '';
-    const clientId = String(payload.entity_id || payload.login_id || payload.clientId || '1113940120');
-    const name = payload.client_name || payload.name || 'Dhan Trader';
-    if (token && typeof token === 'string' && (token.startsWith('eyJ') || token.length > 30)) {
-      return { clientId, token, name };
+  // Case 2: Object / Array input
+  if (typeof raw === 'object') {
+    // If it's an array, scan each element
+    if (Array.isArray(raw)) {
+      for (const item of raw) {
+        const creds = tryExtractCredentials(item, depth + 1);
+        if (creds) return creds;
+      }
+      return null;
     }
-  } else if (typeof data === 'string' && data.startsWith('eyJ')) {
-    return { clientId: '1113940120', token: data, name: 'Dhan Trader' };
+
+    // Known token field names in Dhan responses and storage
+    const tokenCandidates = [
+      raw.token_id,
+      raw.jwt,
+      raw.token,
+      raw.TxnToken,
+      raw.accessToken,
+      raw.access_token,
+      raw.authToken,
+      raw.auth_token,
+      raw.sessionToken,
+      raw.session_token,
+      raw.tokenId,
+      raw.id_token,
+      raw.JWTtoken,
+    ];
+
+    const rawClientId = raw.entity_id || raw.login_id || raw.clientId || raw.client_id || raw.dhanClientId || raw.userId;
+    const rawName = raw.client_name || raw.name || raw.user_name || raw.trader_name;
+
+    for (const cand of tokenCandidates) {
+      if (cand && typeof cand === 'string') {
+        const creds = tryExtractCredentials(cand, depth + 1);
+        if (creds) {
+          return {
+            clientId: rawClientId ? String(rawClientId) : creds.clientId,
+            token: creds.token,
+            name: rawName ? String(rawName) : creds.name,
+          };
+        }
+      }
+    }
+
+    // Check nested .data field
+    if (raw.data && typeof raw.data === 'object') {
+      const creds = tryExtractCredentials(raw.data, depth + 1);
+      if (creds) {
+        return {
+          clientId: rawClientId ? String(rawClientId) : creds.clientId,
+          token: creds.token,
+          name: rawName ? String(rawName) : creds.name,
+        };
+      }
+    }
+
+    // Deep scan all object keys
+    for (const key of Object.keys(raw)) {
+      const val = raw[key];
+      if (val) {
+        const creds = tryExtractCredentials(val, depth + 1);
+        if (creds) {
+          return {
+            clientId: rawClientId ? String(rawClientId) : creds.clientId,
+            token: creds.token,
+            name: rawName ? String(rawName) : creds.name,
+          };
+        }
+      }
+    }
   }
 
   return null;
@@ -152,7 +275,7 @@ const DESKTOP_VIEWPORT_INJECTION = `
             try {
               var clone = res.clone();
               clone.text().then(function(txt) {
-                if (txt && (txt.indexOf('token_id') !== -1 || txt.indexOf('token') !== -1 || txt.indexOf('jwt') !== -1)) {
+                if (txt && (txt.indexOf('token_id') !== -1 || txt.indexOf('token') !== -1 || txt.indexOf('jwt') !== -1 || txt.indexOf('eyJ') !== -1)) {
                   window.ReactNativeWebView.postMessage(JSON.stringify({
                     type: 'DHAN_RAW_NETWORK_RESPONSE',
                     body: txt
@@ -177,7 +300,7 @@ const DESKTOP_VIEWPORT_INJECTION = `
           this.addEventListener('load', function() {
             try {
               var txt = this.responseText;
-              if (txt && (txt.indexOf('token_id') !== -1 || txt.indexOf('token') !== -1 || txt.indexOf('jwt') !== -1)) {
+              if (txt && (txt.indexOf('token_id') !== -1 || txt.indexOf('token') !== -1 || txt.indexOf('jwt') !== -1 || txt.indexOf('eyJ') !== -1)) {
                 window.ReactNativeWebView.postMessage(JSON.stringify({
                   type: 'DHAN_RAW_NETWORK_RESPONSE',
                   body: txt
@@ -190,20 +313,36 @@ const DESKTOP_VIEWPORT_INJECTION = `
       }
     } catch(e) {}
 
-    // 4. Hook localStorage.setItem to immediately catch storage writes
+    // 4. Hook localStorage.setItem and sessionStorage.setItem to catch storage writes continuously
     try {
       var origLocalSet = window.localStorage.setItem;
-      var hasSentSetItem = false;
       window.localStorage.setItem = function(key, val) {
         origLocalSet.apply(this, arguments);
-        if (!hasSentSetItem && (key === 'userdata' || key === 'JWTtoken' || key === 'TxnToken' || key === 'first_auth')) {
-          hasSentSetItem = true;
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'DHAN_ENCRYPTED_STORAGE',
-            key: key,
-            value: val
-          }));
-        }
+        try {
+          if (key === 'userdata' || key === 'JWTtoken' || key === 'TxnToken' || key === 'first_auth' || key === 'token' || (val && typeof val === 'string' && val.indexOf('eyJ') !== -1)) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'DHAN_ENCRYPTED_STORAGE',
+              key: key,
+              value: val
+            }));
+          }
+        } catch(e) {}
+      };
+    } catch(e) {}
+
+    try {
+      var origSessionSet = window.sessionStorage.setItem;
+      window.sessionStorage.setItem = function(key, val) {
+        origSessionSet.apply(this, arguments);
+        try {
+          if (key === 'userdata' || key === 'JWTtoken' || key === 'TxnToken' || key === 'first_auth' || key === 'token' || (val && typeof val === 'string' && val.indexOf('eyJ') !== -1)) {
+            window.ReactNativeWebView.postMessage(JSON.stringify({
+              type: 'DHAN_ENCRYPTED_STORAGE',
+              key: key,
+              value: val
+            }));
+          }
+        } catch(e) {}
       };
     } catch(e) {}
   })();
@@ -212,39 +351,50 @@ const DESKTOP_VIEWPORT_INJECTION = `
 
 const INJECTED_TOKEN_INTERCEPTOR = `
   (function() {
-    var hasSent = false;
     function checkStorage() {
-      if (hasSent) return true;
       try {
-        var u = window.localStorage.getItem('userdata');
-        var j = window.localStorage.getItem('JWTtoken');
-        var f = window.localStorage.getItem('first_auth');
-        var t = window.localStorage.getItem('TxnToken');
-        var s = window.sessionStorage.getItem('userdata');
-        if (u || j || f || t || s) {
-          hasSent = true;
+        var dump = {};
+        var keys = ['userdata', 'JWTtoken', 'token', 'first_auth', 'TxnToken', 'access_token', 'auth'];
+        for (var i = 0; i < keys.length; i++) {
+          var k = keys[i];
+          var lv = window.localStorage.getItem(k);
+          if (lv) dump['ls_' + k] = lv;
+          var sv = window.sessionStorage.getItem(k);
+          if (sv) dump['ss_' + k] = sv;
+        }
+        if (document.cookie) {
+          dump['cookie'] = document.cookie;
+        }
+        // Also check if any key in localStorage contains eyJ
+        for (var m = 0; m < window.localStorage.length; m++) {
+          var lk = window.localStorage.key(m);
+          if (lk) {
+            var val = window.localStorage.getItem(lk);
+            if (val && val.indexOf('eyJ') !== -1) {
+              dump['ls_' + lk] = val;
+            }
+          }
+        }
+        for (var n = 0; n < window.sessionStorage.length; n++) {
+          var sk = window.sessionStorage.key(n);
+          if (sk) {
+            var sval = window.sessionStorage.getItem(sk);
+            if (sval && sval.indexOf('eyJ') !== -1) {
+              dump['ss_' + sk] = sval;
+            }
+          }
+        }
+
+        if (Object.keys(dump).length > 0) {
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'DHAN_PERIODIC_CHECK',
-            payload: {
-              userdata: u,
-              JWTtoken: j,
-              first_auth: f,
-              TxnToken: t,
-              sessionUserdata: s
-            }
+            payload: dump
           }));
-          return true;
         }
       } catch(e) {}
-      return false;
     }
 
-    var poll = setInterval(function() {
-      if (checkStorage()) {
-        clearInterval(poll);
-      }
-    }, 800);
-
+    var poll = setInterval(checkStorage, 1200);
     checkStorage();
   })();
   true;
@@ -286,42 +436,57 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
       } else if (data.type === 'DHAN_ENCRYPTED_STORAGE' && data.value) {
         creds = tryExtractCredentials(data.value);
       } else if (data.type === 'DHAN_PERIODIC_CHECK' && data.payload) {
-        const p = data.payload;
-        creds =
-          tryExtractCredentials(p.userdata) ||
-          tryExtractCredentials(p.first_auth) ||
-          tryExtractCredentials(p.JWTtoken) ||
-          tryExtractCredentials(p.TxnToken) ||
-          tryExtractCredentials(p.sessionUserdata);
+        creds = tryExtractCredentials(data.payload);
       } else if (data.type === 'DHAN_STORAGE_DUMP' && data.payload) {
-        const ls = data.payload.localStorage || {};
-        const ss = data.payload.sessionStorage || {};
+        const payload = data.payload;
+        const ls = payload.localStorage || {};
+        const ss = payload.sessionStorage || {};
+        const cookie = payload.cookie || '';
+        const url = payload.url || '';
 
-        // 1. Try known keys in localStorage and sessionStorage
-        creds =
-          tryExtractCredentials(ls.userdata) ||
-          tryExtractCredentials(ls.first_auth) ||
-          tryExtractCredentials(ls.JWTtoken) ||
-          tryExtractCredentials(ls.TxnToken) ||
-          tryExtractCredentials(ss.userdata);
-
-        // 2. Try URL query param ?user=...
-        if (!creds && data.payload.url && data.payload.url.includes('user=')) {
-          try {
-            const urlObj = new URL(data.payload.url);
-            const userParam = urlObj.searchParams.get('user');
-            if (userParam) {
-              creds = tryExtractCredentials(decodeURIComponent(userParam));
-            }
-          } catch {}
+        // 1. Scan cookie first (Dhan Web frequently sets session cookies)
+        if (cookie) {
+          creds = tryExtractCredentials(cookie);
         }
 
-        // 3. Scan all other localStorage keys
+        // 2. Scan known localStorage & sessionStorage keys
+        if (!creds) {
+          creds =
+            tryExtractCredentials(ls.JWTtoken) ||
+            tryExtractCredentials(ls.userdata) ||
+            tryExtractCredentials(ls.first_auth) ||
+            tryExtractCredentials(ls.token) ||
+            tryExtractCredentials(ls.TxnToken) ||
+            tryExtractCredentials(ss.JWTtoken) ||
+            tryExtractCredentials(ss.userdata) ||
+            tryExtractCredentials(ss.token) ||
+            tryExtractCredentials(ss.first_auth);
+        }
+
+        // 3. Scan all remaining localStorage keys
         if (!creds) {
           for (const key of Object.keys(ls)) {
             creds = tryExtractCredentials(ls[key]);
             if (creds) break;
           }
+        }
+
+        // 4. Scan all remaining sessionStorage keys
+        if (!creds) {
+          for (const key of Object.keys(ss)) {
+            creds = tryExtractCredentials(ss[key]);
+            if (creds) break;
+          }
+        }
+
+        // 5. Check URL params
+        if (!creds && url) {
+          creds = tryExtractCredentials(url);
+        }
+
+        // 6. Deep serialized dump regex scan (catches any JWT anywhere in payload)
+        if (!creds) {
+          creds = tryExtractCredentials(JSON.stringify(payload));
         }
 
         // If manual capture still found nothing, alert user
@@ -384,14 +549,20 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
 
           var dump = {
             url: window.location.href,
+            cookie: '',
             localStorage: {},
             sessionStorage: {}
           };
+          try {
+            dump.cookie = document.cookie || '';
+          } catch(e) {}
           try {
             for (var i = 0; i < window.localStorage.length; i++) {
               var k = window.localStorage.key(i);
               if (k) dump.localStorage[k] = window.localStorage.getItem(k);
             }
+          } catch(e) {}
+          try {
             for (var j = 0; j < window.sessionStorage.length; j++) {
               var sk = window.sessionStorage.key(j);
               if (sk) dump.sessionStorage[sk] = window.sessionStorage.getItem(sk);
