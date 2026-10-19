@@ -32,6 +32,7 @@ export interface DhanConnectionResult {
   latencyMs: number;
   error?: string;
   clientId?: string;
+  spotPrice?: number;
 }
 
 export interface DhanFeedTelemetry {
@@ -39,6 +40,7 @@ export interface DhanFeedTelemetry {
   lastError: string | null;
   lastTickTime: string | null;
   clientId: string | null;
+  latencyMs?: number | null;
 }
 
 class DhanDirectService {
@@ -180,15 +182,15 @@ class DhanDirectService {
       return {
         ok: false,
         latencyMs: 0,
-        error: 'Dhan Client ID and 24-Hour Access Token are required.',
+        error: 'Dhan Client ID and Data API Access Token are required.',
       };
     }
 
     const startTime = Date.now();
     try {
-      // Direct request to Dhan HQ profile/fundlimit endpoint
-      const res = await fetch(`${DHAN_BASE_URL}/fundlimit`, {
-        method: 'GET',
+      // Direct request to Dhan HQ Data API Market Feed LTP endpoint
+      const res = await fetch(`${DHAN_BASE_URL}/marketfeed/ltp`, {
+        method: 'POST',
         headers: {
           'access-token': token,
           'client-id': clientId,
@@ -196,17 +198,28 @@ class DhanDirectService {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
+        body: JSON.stringify({
+          IDX_I: [parseInt(DHAN_NIFTY_INDEX_ID, 10)],
+        }),
       });
 
       const latencyMs = Date.now() - startTime;
 
       if (res.ok) {
+        const json = await res.json();
+        const nseData = json?.data?.IDX_I || json?.IDX_I || {};
+        const niftyItem = nseData[DHAN_NIFTY_INDEX_ID] || nseData['13'];
+        const spotPrice = niftyItem ? Number(niftyItem.last_price || niftyItem.close || 0) : undefined;
+
         this.feedTelemetry.status = 'ONLINE';
         this.feedTelemetry.lastError = null;
+        this.feedTelemetry.latencyMs = latencyMs;
+        this.feedTelemetry.lastTickTime = new Date().toLocaleTimeString('en-IN');
         return {
           ok: true,
           latencyMs,
           clientId,
+          spotPrice,
         };
       }
 
@@ -214,7 +227,7 @@ class DhanDirectService {
       let parsedError = `HTTP ${res.status}`;
       try {
         const errJson = JSON.parse(errText);
-        parsedError = errJson.errorMessage || errJson.message || parsedError;
+        parsedError = errJson.errorMessage || errJson.message || errJson.data?.['808'] || parsedError;
       } catch {
         parsedError = `${parsedError}: ${errText.slice(0, 80)}`;
       }
@@ -234,7 +247,7 @@ class DhanDirectService {
       return {
         ok: false,
         latencyMs,
-        error: `Direct connection failed: ${errMsg}`,
+        error: `Data API connection failed: ${errMsg}`,
       };
     }
   }

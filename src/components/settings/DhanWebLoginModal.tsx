@@ -93,7 +93,7 @@ function tryExtractCredentials(raw: any, depth = 0): { clientId: string; token: 
           payload?.userId;
         const name = payload?.name || payload?.client_name || payload?.user_name || 'Dhan Trader';
         return {
-          clientId: clientId ? String(clientId) : '1113940120',
+          clientId: clientId ? String(clientId) : '',
           token: jwt,
           name: String(name),
         };
@@ -133,7 +133,7 @@ function tryExtractCredentials(raw: any, depth = 0): { clientId: string; token: 
 
     // 1E. If it's a raw token string of sufficient length (> 30 chars and not markup/script)
     if (trimmed.length > 30 && !trimmed.includes(' ') && !trimmed.includes('<') && !trimmed.includes('{')) {
-      return { clientId: '1113940120', token: trimmed, name: 'Dhan Trader' };
+      return { clientId: '', token: trimmed, name: 'Dhan Trader' };
     }
 
     return null;
@@ -427,7 +427,7 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
 
       if (data.type === 'DHAN_LOGIN_SUCCESS' && data.payload?.token) {
         creds = {
-          clientId: data.payload.clientId || '1113940120',
+          clientId: data.payload.clientId || '',
           token: data.payload.token,
           name: data.payload.name || 'Dhan Trader',
         };
@@ -503,7 +503,16 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
         capturedRef.current = true;
         setIsCapturing(true);
 
-        const clientId = creds.clientId || '1113940120';
+        let clientId = creds.clientId?.trim();
+        if (!clientId) {
+          try {
+            const existing = await dhanPlainStorage.load();
+            if (existing.clientId) {
+              clientId = existing.clientId.trim();
+            }
+          } catch {}
+        }
+        clientId = clientId || '';
         const token = creds.token;
         const traderName = creds.name || 'Dhan Trader';
 

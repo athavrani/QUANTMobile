@@ -10,9 +10,8 @@ const STORAGE_KEY_TOKEN = 'QM_PLAIN_DHAN_TOKEN';
 const STORAGE_KEY_TAB_ID = 'QM_PLAIN_DHAN_TAB_ID';
 const STORAGE_KEY_MODE = 'QM_PLAIN_DHAN_STREAMER_MODE';
 
-export const DEFAULT_CLIENT_ID = '1113940120';
-export const DEFAULT_TOKEN =
-  'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJ1c2VyUmVnaW9uIjoiUjEiLCJpc3MiOiJkaGFuIiwicGFydG5lcklkIjoiIiwiZXhwIjoxNzkyMzA3ODY5LCJpYXQiOjE3OTIyMjE0NjksInRva2VuQ29uc3VtZXJUeXBlIjoiU0VMRiIsIndlYmhvb2tVcmwiOiIiLCJkaGFuQ2xpZW50SWQiOiIxMTEzOTQwMTIwIn0.2eFzNCmbHavQN07dCEx5vREthPlStlCo-ysmy50k-8MnK-Aq1SIngR0RZBJzjxfeCPtWdrmOSTF9QDa5TM9aSQ';
+export const DEFAULT_CLIENT_ID = '';
+export const DEFAULT_TOKEN = '';
 
 export interface DhanPlainCredentials {
   clientId: string;
@@ -30,8 +29,8 @@ export interface DhanStreamerTelemetry {
 }
 
 class DhanPlainStorage {
-  private cachedClientId: string = DEFAULT_CLIENT_ID;
-  private cachedToken: string = DEFAULT_TOKEN;
+  private cachedClientId: string = '';
+  private cachedToken: string = '';
   private cachedTabId: string = '1';
   private isStreamerEnabled: boolean = true;
   private isLoaded: boolean = false;

@@ -56,24 +56,39 @@ export function SettingsScreen() {
     setIsTesting(true);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    const result = await testDhanWebStreamerConnection(dhanClientId, dhanAccessToken);
+    // 1. Direct REST Data API verification (fetches live NIFTY spot quote from /marketfeed/ltp)
+    const restResult = await dhanDirectService.testDirectConnection(dhanClientId, dhanAccessToken);
+
+    // 2. Direct Live WebSocket Streamer verification (TLS handshake & auth)
+    const wsResult = await testDhanWebStreamerConnection(dhanClientId, dhanAccessToken);
+
     setIsTesting(false);
 
-    if (result.ok) {
+    if (restResult.ok || wsResult.ok) {
       setIsConnected(true);
-      setLatencyMs(result.latencyMs);
+      const latency = restResult.latencyMs || wsResult.latencyMs;
+      setLatencyMs(latency);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        '⚡ Dhan Web Streamer Connected!',
-        `Direct TLS connection to Dhan Web Streamer (AWS Mumbai) successful.\n\nRound-Trip Latency: ${result.latencyMs}ms\nEndpoint: wss://price-feed-web.dhan.co\nStatus: STREAMING READY`
-      );
+
+      const lines: string[] = [
+        'Direct connection to DhanHQ Data API successful!\n',
+        `• Round-Trip Latency: ${latency}ms`,
+      ];
+      if (restResult.ok && restResult.spotPrice) {
+        lines.push(`• Live NIFTY 50 Spot: ₹${restResult.spotPrice.toLocaleString('en-IN')}`);
+      }
+      lines.push(`• REST Data API: ${restResult.ok ? '🟢 VERIFIED' : `⚠️ ${restResult.error}`}`);
+      lines.push(`• Live WebSocket: ${wsResult.ok ? '🟢 READY' : `⚠️ ${wsResult.error}`}`);
+      lines.push('\nStatus: DATA API ACTIVE');
+
+      Alert.alert('⚡ DhanHQ Data API Connected!', lines.join('\n'));
     } else {
       setIsConnected(false);
       setLatencyMs(null);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       Alert.alert(
         'Connection Failed',
-        `Could not reach Dhan Web Streamer:\n\n${result.error || 'Unknown error'}\n\nPlease check your Client ID or Token.`
+        `Could not authenticate with DhanHQ Data API:\n\n• REST Data API: ${restResult.error || 'Failed'}\n• WebSocket: ${wsResult.error || 'Failed'}\n\nPlease check your Client ID or Token.`
       );
     }
   };
@@ -124,17 +139,17 @@ export function SettingsScreen() {
   return (
     <ScrollView style={styles.container}>
       {/* DIRECT DHAN LIVE STREAMER */}
-      <Text style={styles.sectionHeader}>DHAN LIVE WEB STREAMER (ZERO MIDDLEMAN)</Text>
+      <Text style={styles.sectionHeader}>DHANHQ DATA API (OFFICIAL PLAN)</Text>
 
       <View style={styles.card}>
         <View style={styles.statusRow}>
           <View>
-            <Text style={styles.gatewayTitle}>Direct Phone-to-Dhan Stream</Text>
-            <Text style={styles.gatewaySub}>wss://price-feed-web.dhan.co • Direct TLS AWS Mumbai</Text>
+            <Text style={styles.gatewayTitle}>Direct Phone-to-Dhan Data Feed</Text>
+            <Text style={styles.gatewaySub}>https://api.dhan.co/v2 • wss://api-feed.dhan.co</Text>
           </View>
           <View style={[styles.statusBadge, isConnected ? styles.statusBadgeOnline : styles.statusBadgeOffline]}>
             <Text style={[styles.statusBadgeText, isConnected ? styles.textBullish : styles.textMuted]}>
-              {isConnected ? (latencyMs ? `🟢 ${latencyMs}ms` : '🟢 STREAMING') : '⚪ OFFLINE'}
+              {isConnected ? (latencyMs ? `🟢 ${latencyMs}ms` : '🟢 ACTIVE') : '⚪ OFFLINE'}
             </Text>
           </View>
         </View>
@@ -167,7 +182,7 @@ export function SettingsScreen() {
             style={styles.textInput}
             value={dhanClientId}
             onChangeText={setDhanClientId}
-            placeholder="e.g. 1113940120"
+            placeholder="e.g. 10-digit Client ID"
             placeholderTextColor={colors.textMuted}
             keyboardType="numeric"
             autoCapitalize="none"
@@ -176,7 +191,7 @@ export function SettingsScreen() {
 
         <View style={styles.inputContainer}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text style={styles.inputLabel}>DHAN ACCESS / SESSION TOKEN (UNENCRYPTED)</Text>
+            <Text style={styles.inputLabel}>DHAN ACCESS TOKEN (DATA API / SESSION)</Text>
             <TouchableOpacity onPress={() => setIsTokenVisible(!isTokenVisible)}>
               <Text style={styles.toggleText}>{isTokenVisible ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
@@ -185,20 +200,27 @@ export function SettingsScreen() {
             style={styles.textInput}
             value={dhanAccessToken}
             onChangeText={setDhanAccessToken}
-            placeholder="Paste your 24-hr token or browser session token"
+            placeholder="Paste 30-day Data API token or web session token"
             placeholderTextColor={colors.textMuted}
             secureTextEntry={!isTokenVisible}
             autoCapitalize="none"
           />
         </View>
 
-        {/* 1-Line Browser Token Helper */}
+        {/* Fast Token Helper */}
         <View style={styles.helperCard}>
-          <Text style={styles.helperTitle}>💡 Fast Token Helper (from web.dhan.co):</Text>
+          <Text style={styles.helperTitle}>💡 DhanHQ Data API Token Setup:</Text>
           <Text style={styles.helperDesc}>
-            Log into <Text style={{ color: colors.bullish }}>web.dhan.co</Text>, press F12 (Console), and run:
+            • <Text style={{ fontWeight: '700', color: colors.bullish }}>Option A (Recommended):</Text> Generate a 30-day Access Token from{' '}
+            <Text style={{ color: colors.cyan }}>dhanhq.co</Text> or <Text style={{ color: colors.cyan }}>web.dhan.co</Text> (Profile ➔ Access Token ➔ Generate Access Token) and paste it above.
           </Text>
-          <View style={styles.codeBox}>
+          <Text style={[styles.helperDesc, { marginTop: 6 }]}>
+            • <Text style={{ fontWeight: '700', color: colors.bullish }}>Option B:</Text> Tap &quot;Open web.dhan.co &amp; Auto-Sync Token&quot; above to log in and capture your session automatically.
+          </Text>
+          <Text style={[styles.helperDesc, { marginTop: 6 }]}>
+            • <Text style={{ fontWeight: '700', color: colors.bullish }}>Option C (Browser Console):</Text> In web.dhan.co console run:
+          </Text>
+          <View style={[styles.codeBox, { marginTop: 4 }]}>
             <Text style={styles.codeText}>copy(JSON.parse(sessionStorage.getItem("userdata")).token_id)</Text>
           </View>
         </View>
@@ -330,7 +352,11 @@ export function SettingsScreen() {
 
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Live Feed Architecture:</Text>
-          <Text style={[styles.infoVal, { color: colors.bullish }]}>Direct-to-Dhan (Zero Middleman)</Text>
+          <Text style={[styles.infoVal, { color: colors.bullish }]}>Direct DhanHQ Data API (Official Plan)</Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Option Chain Engine:</Text>
+          <Text style={[styles.infoVal, { color: colors.cyan }]}>DhanHQ /v2/optionchain Direct</Text>
         </View>
         <View style={styles.infoRow}>
           <Text style={styles.infoLabel}>Terminal Mode:</Text>
@@ -343,10 +369,15 @@ export function SettingsScreen() {
       <DhanWebLoginModal
         visible={isLoginModalVisible}
         onClose={() => setIsLoginModalVisible(false)}
-        onSuccess={(id, token) => {
+        onSuccess={async (id, token) => {
           setDhanClientId(id);
           setDhanAccessToken(token);
           setIsConnected(true);
+          await dhanPlainStorage.save(id, token);
+          await dhanDirectService.saveCredentials(id, token);
+          dhanWebStreamer.start();
+          useRadarStore.getState().initStreamer();
+          await useRadarStore.getState().refreshAll();
         }}
       />
     </ScrollView>
