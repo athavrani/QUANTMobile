@@ -22,6 +22,9 @@ export interface DhanDirectQuote {
   high: number;
   low: number;
   close: number;
+  prevClose?: number;
+  netChange?: number;
+  changePercent?: number;
   volume: number;
   lastUpdated: string;
 }
@@ -374,18 +377,28 @@ class DhanDirectService {
           const sym = secIdToTicker.get(secId);
           const item = nseData[secId] || nseData[String(secId)];
           if (sym && item) {
-            const ltp = Number(item.last_price || item.close || 0);
+            const ltp = Number(item.last_price || item.close || item.ltp || 0);
             const open = Number(item.ohlc?.open || item.open || ltp);
             const high = Number(item.ohlc?.high || item.high || ltp);
             const low = Number(item.ohlc?.low || item.low || ltp);
-            let close = Number(item.ohlc?.close || item.close || item.prev_close || item.previous_close || 0);
-            const netChange = Number(item.net_change || item.change || 0);
-            if (close <= 0 && ltp > 0 && netChange !== 0) {
-              close = +(ltp - netChange).toFixed(2);
+            const netChange = Number(item.net_change ?? item.change ?? 0);
+
+            // Dhan Marketfeed: item.ohlc?.close or item.previous_close is the official previous day close
+            let prevClose = Number(item.ohlc?.close || item.previous_close || item.prev_close || 0);
+            if (prevClose <= 0 && ltp > 0 && netChange !== 0) {
+              prevClose = +(ltp - netChange).toFixed(2);
             }
-            if (close <= 0) {
-              close = ltp;
+            if (prevClose <= 0 && item.close) {
+              prevClose = Number(item.close);
             }
+            if (prevClose <= 0) {
+              prevClose = ltp;
+            }
+
+            const changePercent = prevClose > 0 && ltp > 0
+              ? +(((ltp - prevClose) / prevClose) * 100).toFixed(2)
+              : 0;
+
             const volume = Number(item.volume || 0);
 
             quotes[sym] = {
@@ -395,7 +408,10 @@ class DhanDirectService {
               open,
               high,
               low,
-              close,
+              close: prevClose, // maintain close as previous close for consistent radar baselines
+              prevClose,
+              netChange,
+              changePercent,
               volume,
               lastUpdated: nowTimeStr,
             };

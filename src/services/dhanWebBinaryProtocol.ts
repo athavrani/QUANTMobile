@@ -276,34 +276,11 @@ export function decodeDhanWebBinaryFeed(buffer: ArrayBuffer): DhanLiveTickData[]
       });
     }
 
-    // TYPE 3: OHLC Update (27+ bytes)
+    // TYPE 3: Market Depth / Level 2 Packet (27+ bytes)
+    // Note: Dhan Code 3 is Market Depth, NOT OHLC.
+    // Parsing depth bytes as floats previously caused bogus values (e.g. 85%) to be emitted as changePercent.
     else if (packetType === 3 && remaining.byteLength >= 27) {
-      const segId = new Uint8Array(remaining.slice(0, 1))[0].toString();
-      const secId = new Uint32Array(remaining.slice(1, 5))[0].toString();
-      const open = Number(new Float32Array(remaining.slice(11, 15))[0].toFixed(2));
-      const close = Number(new Float32Array(remaining.slice(15, 19))[0].toFixed(2));
-      const high = Number(new Float32Array(remaining.slice(19, 23))[0].toFixed(2));
-      const low = Number(new Float32Array(remaining.slice(23, 27))[0].toFixed(2));
-
-      const exch = segId === '4' ? 'BSE' : 'NSE';
-      const seg = segId === '2' ? 'D' : 'E';
-      const key = `${secId}-${seg}-${exch}`;
-
-      ticks.push({
-        key,
-        securityId: secId,
-        exchange: exch,
-        segment: seg,
-        ltp: close,
-        open,
-        high,
-        low,
-        close,
-        volume: 0,
-        change: +(close - open).toFixed(2),
-        changePercent: open > 0 ? +(((close - open) / open) * 100).toFixed(2) : 0,
-        lastUpdated: nowStr,
-      });
+      // Discard depth packet from equity LTP/OHLC tick processing
     }
 
     // TYPE 5: Spot Index Tick (31+ bytes) e.g. NIFTY 50

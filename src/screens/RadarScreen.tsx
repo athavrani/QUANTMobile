@@ -38,13 +38,16 @@ interface StockCardProps {
 const StockCard = React.memo(
   function StockCard({ item, onSelect }: StockCardProps) {
     const ratioPercent = Math.min(150, Math.round(item.volumeRatio * 100));
-    const isBullish = item.percentChange >= 0;
-    const isPositive = item.percentChange > 0;
-    const isNegative = item.percentChange < 0;
+    const priceChangePct = (item.prevClose && item.prevClose > 0 && item.spotPrice > 0)
+      ? +(((item.spotPrice - item.prevClose) / item.prevClose) * 100).toFixed(2)
+      : item.percentChange;
+    const isBullish = priceChangePct >= 0;
+    const isPositive = priceChangePct > 0;
+    const isNegative = priceChangePct < 0;
     const pctColor = isPositive ? colors.bullish : (isNegative ? colors.bearish : colors.textMuted);
-    const formattedPercent = isPositive
-      ? `+${item.percentChange.toFixed(2)}%`
-      : `${item.percentChange.toFixed(2)}%`;
+    const formattedPriceChange = isPositive
+      ? `+${priceChangePct.toFixed(2)}%`
+      : `${priceChangePct.toFixed(2)}%`;
 
     let circleIcon = '⚪';
     let circleTone = colors.textMuted;
@@ -96,7 +99,7 @@ const StockCard = React.memo(
           <View style={styles.priceGroup}>
             <Text style={styles.price}>₹{item.spotPrice.toFixed(2)}</Text>
             <Text style={[styles.percent, { color: pctColor }]}>
-              {formattedPercent}
+              {formattedPriceChange}
             </Text>
           </View>
         </View>
@@ -153,6 +156,7 @@ const StockCard = React.memo(
   },
   (prev, next) =>
     prev.item.spotPrice === next.item.spotPrice &&
+    prev.item.prevClose === next.item.prevClose &&
     prev.item.percentChange === next.item.percentChange &&
     prev.item.todayTradedShares === next.item.todayTradedShares &&
     prev.item.volumeRatio === next.item.volumeRatio &&

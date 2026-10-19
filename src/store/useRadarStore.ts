@@ -326,10 +326,10 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
             ? stock.prevClose
             : (dayOpen > 0 ? dayOpen : spotPrice);
 
-          // Use tick.changePercent if provided by streamer, else compute dynamically from live spotPrice against prevClose
-          const pctChange = tick.changePercent !== undefined && tick.changePercent !== 0
-            ? tick.changePercent
-            : (prevClose > 0 ? +(((spotPrice - prevClose) / prevClose) * 100).toFixed(2) : 0);
+          // Compute genuine intraday price percentage change strictly from live spotPrice against prevClose
+          const pctChange = (prevClose > 0 && spotPrice > 0)
+            ? +(((spotPrice - prevClose) / prevClose) * 100).toFixed(2)
+            : stock.percentChange;
 
           const isBullish = pctChange >= 0 || spotPrice >= dayOpen;
 

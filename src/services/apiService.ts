@@ -100,9 +100,13 @@ export const apiService = {
       const avgShares = m.avg20DTradedShares || 1;
       const ratio = todayShares > 0 ? +(todayShares / avgShares).toFixed(3) : 0;
       const hasCrossed = todayShares >= avgShares && todayShares > 0;
-      const isBullish = spotPrice >= dayOpen;
-      const close = q && q.close > 0 ? q.close : dayOpen;
-      const pctChange = close > 0 && spotPrice > 0 ? +(((spotPrice - close) / close) * 100).toFixed(2) : 0;
+      const prevClose = (q && q.prevClose && q.prevClose > 0)
+        ? q.prevClose
+        : (q && q.close > 0 ? q.close : (m.approxLtp > 0 ? m.approxLtp : dayOpen));
+      const pctChange = (prevClose > 0 && spotPrice > 0)
+        ? +(((spotPrice - prevClose) / prevClose) * 100).toFixed(2)
+        : (q && q.changePercent !== undefined ? q.changePercent : 0);
+      const isBullish = pctChange >= 0 || spotPrice >= dayOpen;
 
       let circleIndicator: 'GREEN' | 'RED' | 'AMBER' | 'GREY' = 'GREY';
       if (hasCrossed) {
@@ -118,7 +122,7 @@ export const apiService = {
         sector: m.sector,
         indices: m.indices,
         spotPrice,
-        prevClose: close,
+        prevClose,
         dayOpen,
         dayHigh,
         dayLow,

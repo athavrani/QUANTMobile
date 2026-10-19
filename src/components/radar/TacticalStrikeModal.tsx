@@ -44,6 +44,11 @@ export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewO
     }
   };
 
+  const priceChangePct = (stock.prevClose && stock.prevClose > 0 && stock.spotPrice > 0)
+    ? +(((stock.spotPrice - stock.prevClose) / stock.prevClose) * 100).toFixed(2)
+    : stock.percentChange;
+  const isPositive = priceChangePct > 0;
+  const isNegative = priceChangePct < 0;
   const isCrossed = stock.hasCrossed20D;
   const isBullish = stock.crossoverDirection === 'BULLISH';
 
@@ -110,17 +115,17 @@ export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewO
                     styles.spotPercent,
                     {
                       color:
-                        stock.percentChange > 0
+                        isPositive
                           ? colors.bullish
-                          : stock.percentChange < 0
+                          : isNegative
                           ? colors.bearish
                           : colors.textMuted,
                     },
                   ]}
                 >
-                  {stock.percentChange > 0
-                    ? `+${stock.percentChange.toFixed(2)}%`
-                    : `${stock.percentChange.toFixed(2)}%`}
+                  {isPositive
+                    ? `+${priceChangePct.toFixed(2)}%`
+                    : `${priceChangePct.toFixed(2)}%`}
                 </Text>
               </View>
               <Text style={styles.openText}>Day Open: ₹{stock.dayOpen.toFixed(2)} • Direction: {isBullish ? '▲ Bullish' : '▼ Bearish'}</Text>
