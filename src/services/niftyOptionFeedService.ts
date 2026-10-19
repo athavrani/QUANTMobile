@@ -7,6 +7,7 @@
 import { OobtstLiveState, OobtstLegDetail } from '../strategies/types';
 import { NiftyBreakout180State, Candidate180Contract } from '../types/mobile';
 import { dhanDirectService } from './dhanDirectService';
+import { dhanWebStreamer } from './dhanWebStreamer';
 import { getAdjustedExpiryDate, formatDateKey, formatDateKeyIST } from '../constants/nseHolidays';
 
 const NIFTY_LOT_SIZE = 25;
@@ -167,10 +168,26 @@ class NiftyOptionFeedService {
       ceAsk?: number;
       peBid?: number;
       peAsk?: number;
+      ceSecId?: string;
+      peSecId?: string;
     }
   > | null = null;
   private lastLiveSpot: number | null = null;
   private lastOptionChainSyncTime = 0;
+
+  public updateOptionPriceFromTick(securityId: string, ltp: number): void {
+    if (!this.cachedLiveOptionChain || ltp <= 0) return;
+    for (const item of Object.values(this.cachedLiveOptionChain)) {
+      if (item.ceSecId && item.ceSecId === securityId) {
+        item.ceLtp = ltp;
+        break;
+      }
+      if (item.peSecId && item.peSecId === securityId) {
+        item.peLtp = ltp;
+        break;
+      }
+    }
+  }
 
   public getLastLiveSpot(): number | null {
     return this.lastLiveSpot;
@@ -189,6 +206,20 @@ class NiftyOptionFeedService {
           this.lastLiveSpot = ocData.spotPrice;
         }
         this.lastOptionChainSyncTime = Date.now();
+
+        // Register active option contracts to WebSocket streamer for live tick updates
+        try {
+          const anchor = this.getOrCreateDayAnchor(this.lastLiveSpot || 24850);
+          const ceItem = ocData.oc[anchor.ceStrike];
+          const peItem = ocData.oc[anchor.peStrike];
+          if (ceItem?.ceSecId) {
+            dhanWebStreamer.subscribe(ceItem.ceSecId, 'NSE', 'D', 'price');
+          }
+          if (peItem?.peSecId) {
+            dhanWebStreamer.subscribe(peItem.peSecId, 'NSE', 'D', 'price');
+          }
+        } catch {}
+
         return true;
       }
     } catch {}

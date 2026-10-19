@@ -290,6 +290,14 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
         hasChanged = true;
       }
 
+      // Check if derivative ticks arrived (NSE_FNO)
+      for (const tick of Object.values(tickBatch)) {
+        if (tick.segment === 'D' || tick.exchange === 'NSE_FNO') {
+          niftyOptionFeedService.updateOptionPriceFromTick(tick.securityId, tick.ltp);
+          hasChanged = true;
+        }
+      }
+
       const currentStocks = get().stocks;
       let updatedStocks = currentStocks;
 

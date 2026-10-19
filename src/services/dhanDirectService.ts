@@ -494,6 +494,8 @@ class DhanDirectService {
         ceAsk?: number;
         peBid?: number;
         peAsk?: number;
+        ceSecId?: string;
+        peSecId?: string;
       }
     >;
   } | null> {
@@ -579,6 +581,8 @@ class DhanDirectService {
           ceAsk?: number;
           peBid?: number;
           peAsk?: number;
+          ceSecId?: string;
+          peSecId?: string;
         }
       > = {};
       for (const [strikeStr, data] of Object.entries(oc as Record<string, any>)) {
@@ -586,6 +590,9 @@ class DhanDirectService {
         if (!isNaN(strike)) {
           const ceLtp = Number(data.ce?.last_price || 0);
           const peLtp = Number(data.pe?.last_price || 0);
+          const ceSecId = data.ce?.security_id || data.ce?.sec_id || data.ce?.securityId ? String(data.ce?.security_id || data.ce?.sec_id || data.ce?.securityId) : undefined;
+          const peSecId = data.pe?.security_id || data.pe?.sec_id || data.pe?.securityId ? String(data.pe?.security_id || data.pe?.sec_id || data.pe?.securityId) : undefined;
+
           result[strike] = {
             ceLtp,
             peLtp,
@@ -597,6 +604,8 @@ class DhanDirectService {
             ceAsk: Number(data.ce?.top_ask || data.ce?.ask || ceLtp || 0),
             peBid: Number(data.pe?.top_bid || data.pe?.bid || peLtp || 0),
             peAsk: Number(data.pe?.top_ask || data.pe?.ask || peLtp || 0),
+            ceSecId,
+            peSecId,
           };
         }
       }
