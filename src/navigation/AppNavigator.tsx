@@ -25,7 +25,7 @@ export function AppNavigator() {
       case 'SIGNALS':
         return <SignalsScreen />;
       case 'RADAR':
-        return <RadarScreen />;
+        return <RadarScreen onNavigateToSignals={() => setActiveTab('SIGNALS')} />;
       case 'JOURNAL':
         return <JournalScreen />;
       case 'SETTINGS':

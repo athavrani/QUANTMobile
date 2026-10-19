@@ -292,22 +292,25 @@ export const apiService = {
   calculateTacticalStrike(stock: StockRadarItem): TacticalStrikeSuggestion {
     const step = stock.strikeStep || 50;
     const atmStrike = Math.round(stock.spotPrice / step) * step;
-    const estCePrem = +(stock.spotPrice * 0.015).toFixed(2);
-    const estPePrem = +(stock.spotPrice * 0.015).toFixed(2);
+
+    // Do NOT derive option prices dynamically from spot index in pre-market or when closed
+    const isMarketBeforeOpen = isMarketSessionBeforeOpen();
+    const liveCePrem = isMarketBeforeOpen ? 0 : 0;
+    const livePePrem = isMarketBeforeOpen ? 0 : 0;
 
     return {
       underlying: stock.ticker,
       spotLtp: stock.spotPrice,
       recommendedCeStrike: atmStrike,
       recommendedPeStrike: atmStrike,
-      estimatedCePremium: estCePrem,
-      estimatedPePremium: estPePrem,
-      ceStopLoss: +(estCePrem * 0.80).toFixed(2),     // -20%
-      ceTarget1: +(estCePrem * 1.40).toFixed(2),      // +40%
-      cePiTarget1: +(estCePrem * 1.031416).toFixed(2),// +3.14%
-      cePiTarget2: +(estCePrem * 1.062832).toFixed(2),// +6.28%
-      peStopLoss: +(estPePrem * 0.80).toFixed(2),
-      peTarget1: +(estPePrem * 1.40).toFixed(2),
+      estimatedCePremium: liveCePrem,
+      estimatedPePremium: livePePrem,
+      ceStopLoss: liveCePrem > 0 ? +(liveCePrem * 0.80).toFixed(2) : 0,
+      ceTarget1: liveCePrem > 0 ? +(liveCePrem * 1.40).toFixed(2) : 0,
+      cePiTarget1: liveCePrem > 0 ? +(liveCePrem * 1.031416).toFixed(2) : 0,
+      cePiTarget2: liveCePrem > 0 ? +(liveCePrem * 1.062832).toFixed(2) : 0,
+      peStopLoss: livePePrem > 0 ? +(livePePrem * 0.80).toFixed(2) : 0,
+      peTarget1: livePePrem > 0 ? +(livePePrem * 1.40).toFixed(2) : 0,
     };
   },
 };

@@ -18,7 +18,11 @@ import * as Haptics from 'expo-haptics';
 
 type FilterType = 'ALL' | 'NIFTY50' | 'SENSEX' | 'GREEN' | 'RED' | 'NEAR';
 
-export function RadarScreen() {
+interface RadarScreenProps {
+  onNavigateToSignals?: () => void;
+}
+
+export function RadarScreen({ onNavigateToSignals }: RadarScreenProps) {
   const {
     stocks,
     selectedStock,
@@ -187,6 +191,23 @@ export function RadarScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Top Navigation Row */}
+      {onNavigateToSignals && (
+        <View style={styles.topNavRow}>
+          <TouchableOpacity
+            style={styles.backToSignalsBtn}
+            onPress={() => {
+              Haptics.selectionAsync();
+              onNavigateToSignals();
+            }}
+            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          >
+            <Text style={styles.backToSignalsText}>← Back to Signals</Text>
+          </TouchableOpacity>
+          <Text style={styles.topNavTitle}>20D Volume Radar</Text>
+        </View>
+      )}
+
       {/* Feed Status Indicator */}
       <View style={styles.feedStatusBar}>
         <View style={styles.feedStatusLeft}>
@@ -305,7 +326,10 @@ export function RadarScreen() {
         stock={selectedStock}
         tactical={tacticalStrike}
         onClose={clearSelectedStock}
-        onViewOptionChain={(s) => setChainStock(s)}
+        onViewOptionChain={(s) => {
+          clearSelectedStock();
+          setTimeout(() => setChainStock(s), 50);
+        }}
       />
 
       {/* Full Live Option Chain Matrix Modal */}
@@ -324,6 +348,34 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.obsidian,
+  },
+  topNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.divider,
+  },
+  backToSignalsBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceSubtle,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  backToSignalsText: {
+    color: colors.cyan,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  topNavTitle: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '800',
   },
   feedStatusBar: {
     flexDirection: 'row',

@@ -120,6 +120,7 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
         apiService.fetchNiftyOvernightState(),
         apiService.fetchNiftyBreakout180State(),
         dhanDirectService.fetchNiftyIndexQuote(),
+        niftyOptionFeedService.syncLiveOptionChain(),
       ]);
 
       // Point 5.1: Monotonic Alert Latch Check & Journal Audit Recording

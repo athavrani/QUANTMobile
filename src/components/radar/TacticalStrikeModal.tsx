@@ -50,10 +50,33 @@ export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewO
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
+        {/* Full-screen Backdrop dismissal */}
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+
         <View style={styles.modalContent}>
+          {/* Top Drag Indicator */}
+          <View style={styles.dragHandleContainer}>
+            <View style={styles.dragHandle} />
+          </View>
+
           {/* Header */}
           <View style={styles.modalHeader}>
-            <View>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => {
+                Haptics.selectionAsync();
+                onClose();
+              }}
+              hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            >
+              <Text style={styles.backButtonText}>← Back</Text>
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, marginHorizontal: 8 }}>
               <View style={styles.tickerRow}>
                 <Text style={styles.ticker}>{stock.ticker}</Text>
                 <View style={[styles.statusBadge, { backgroundColor: isCrossed ? colors.bullishGlow : colors.warningGlow }]}>
@@ -62,15 +85,22 @@ export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewO
                   </Text>
                 </View>
               </View>
-              <Text style={styles.stockName}>{stock.name}</Text>
+              <Text style={styles.stockName} numberOfLines={1}>{stock.name}</Text>
             </View>
 
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+            <TouchableOpacity
+              style={styles.closeBtn}
+              onPress={() => {
+                Haptics.selectionAsync();
+                onClose();
+              }}
+              hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            >
               <Text style={styles.closeBtnText}>✕</Text>
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.body}>
+          <ScrollView style={styles.body} showsVerticalScrollIndicator={false}>
             {/* Spot Price & Volume Metrics */}
             <View style={styles.spotBox}>
               <View style={styles.spotRow}>
@@ -132,22 +162,28 @@ export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewO
                 </View>
               </View>
               <Text style={styles.strikeNumber}>{tactical.recommendedCeStrike} CE</Text>
-              <Text style={styles.estPrem}>Est. Premium: ₹{tactical.estimatedCePremium.toFixed(2)}</Text>
+              <Text style={styles.estPrem}>
+                {tactical.estimatedCePremium > 0
+                  ? `Live Premium: ₹${tactical.estimatedCePremium.toFixed(2)}`
+                  : 'Live Premium: Awaiting 09:15 Market Open'}
+              </Text>
 
-              <View style={styles.levelsRow}>
-                <View style={styles.levelItem}>
-                  <Text style={styles.levelLabel}>INITIAL SL (-20%)</Text>
-                  <Text style={[styles.levelVal, { color: colors.bearish }]}>₹{tactical.ceStopLoss.toFixed(2)}</Text>
+              {tactical.estimatedCePremium > 0 && (
+                <View style={styles.levelsRow}>
+                  <View style={styles.levelItem}>
+                    <Text style={styles.levelLabel}>INITIAL SL (-20%)</Text>
+                    <Text style={[styles.levelVal, { color: colors.bearish }]}>₹{tactical.ceStopLoss.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.levelItem}>
+                    <Text style={styles.levelLabel}>TARGET (+40%)</Text>
+                    <Text style={[styles.levelVal, { color: colors.bullish }]}>₹{tactical.ceTarget1.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.levelItem}>
+                    <Text style={styles.levelLabel}>π% MILESTONE</Text>
+                    <Text style={[styles.levelVal, { color: colors.cyan }]}>₹{tactical.cePiTarget1.toFixed(2)}</Text>
+                  </View>
                 </View>
-                <View style={styles.levelItem}>
-                  <Text style={styles.levelLabel}>TARGET (+40%)</Text>
-                  <Text style={[styles.levelVal, { color: colors.bullish }]}>₹{tactical.ceTarget1.toFixed(2)}</Text>
-                </View>
-                <View style={styles.levelItem}>
-                  <Text style={styles.levelLabel}>π% MILESTONE</Text>
-                  <Text style={[styles.levelVal, { color: colors.cyan }]}>₹{tactical.cePiTarget1.toFixed(2)}</Text>
-                </View>
-              </View>
+              )}
             </View>
 
             {/* Recommended Put Option PE */}
@@ -164,22 +200,41 @@ export function TacticalStrikeModal({ visible, stock, tactical, onClose, onViewO
                 </View>
               </View>
               <Text style={styles.strikeNumber}>{tactical.recommendedPeStrike} PE</Text>
-              <Text style={styles.estPrem}>Est. Premium: ₹{tactical.estimatedPePremium.toFixed(2)}</Text>
+              <Text style={styles.estPrem}>
+                {tactical.estimatedPePremium > 0
+                  ? `Live Premium: ₹${tactical.estimatedPePremium.toFixed(2)}`
+                  : 'Live Premium: Awaiting 09:15 Market Open'}
+              </Text>
 
-              <View style={styles.levelsRow}>
-                <View style={styles.levelItem}>
-                  <Text style={styles.levelLabel}>INITIAL SL (-20%)</Text>
-                  <Text style={[styles.levelVal, { color: colors.bearish }]}>₹{tactical.peStopLoss.toFixed(2)}</Text>
+              {tactical.estimatedPePremium > 0 && (
+                <View style={styles.levelsRow}>
+                  <View style={styles.levelItem}>
+                    <Text style={styles.levelLabel}>INITIAL SL (-20%)</Text>
+                    <Text style={[styles.levelVal, { color: colors.bearish }]}>₹{tactical.peStopLoss.toFixed(2)}</Text>
+                  </View>
+                  <View style={styles.levelItem}>
+                    <Text style={styles.levelLabel}>TARGET (+40%)</Text>
+                    <Text style={[styles.levelVal, { color: colors.bullish }]}>₹{tactical.peTarget1.toFixed(2)}</Text>
+                  </View>
                 </View>
-                <View style={styles.levelItem}>
-                  <Text style={styles.levelLabel}>TARGET (+40%)</Text>
-                  <Text style={[styles.levelVal, { color: colors.bullish }]}>₹{tactical.peTarget1.toFixed(2)}</Text>
-                </View>
-              </View>
+              )}
             </View>
 
-            <View style={{ height: 30 }} />
+            <View style={{ height: 20 }} />
           </ScrollView>
+
+          {/* Sticky Bottom Close Button */}
+          <View style={styles.bottomBar}>
+            <TouchableOpacity
+              style={styles.bottomCloseBtn}
+              onPress={() => {
+                Haptics.selectionAsync();
+                onClose();
+              }}
+            >
+              <Text style={styles.bottomCloseBtnText}>← Close & Return to Radar</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </Modal>
@@ -198,15 +253,37 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 16,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    maxHeight: '85%',
+    maxHeight: '90%',
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.cardBorder,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
+  },
+  backButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceSubtle,
+  },
+  backButtonText: {
+    color: colors.cyan,
+    fontSize: 13,
+    fontWeight: '700',
   },
   tickerRow: {
     flexDirection: 'row',
@@ -233,9 +310,9 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.surfaceHover,
     alignItems: 'center',
     justifyContent: 'center',
@@ -243,6 +320,26 @@ const styles = StyleSheet.create({
   closeBtnText: {
     color: colors.textSecondary,
     fontSize: 16,
+    fontWeight: '700',
+  },
+  bottomBar: {
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    backgroundColor: colors.surface,
+  },
+  bottomCloseBtn: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  bottomCloseBtnText: {
+    color: colors.textPrimary,
+    fontSize: 14,
     fontWeight: '700',
   },
   body: {

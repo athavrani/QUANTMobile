@@ -70,7 +70,7 @@ export const VolumeCrossoverPlugin: BaseStrategyPlugin = {
             {
               type: 'CE',
               symbol: `${topCrossed.ticker} ${Math.round(topCrossed.spotPrice / (topCrossed.strikeStep || 20)) * (topCrossed.strikeStep || 20)} CE`,
-              currentLtp: +(topCrossed.spotPrice * 0.015).toFixed(2),
+              currentLtp: 0,
               status: 'ACTIVE',
             },
           ]
@@ -129,7 +129,9 @@ export const VolumeCrossoverPlugin: BaseStrategyPlugin = {
           <View style={styles.topStockRow}>
             <Text style={styles.topStockLabel}>Recommended ATM Call:</Text>
             <TouchableOpacity onPress={() => onOpenBroker(state.legs![0].symbol)}>
-              <Text style={styles.brokerLink}>{state.legs![0].symbol} (Est. ₹{state.legs![0].currentLtp.toFixed(2)}) ↗</Text>
+              <Text style={styles.brokerLink}>
+                {state.legs![0].symbol} {state.legs![0].currentLtp > 0 ? `(₹${state.legs![0].currentLtp.toFixed(2)})` : ''} ↗
+              </Text>
             </TouchableOpacity>
           </View>
         )}

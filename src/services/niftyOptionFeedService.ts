@@ -410,28 +410,26 @@ class NiftyOptionFeedService {
 
       const live = this.cachedLiveOptionChain ? this.cachedLiveOptionChain[strikePrice] : undefined;
 
-      // Realistic institutional OI distribution fallback around ATM
-      const distFromAtm = Math.abs(i);
-      const baseOi = Math.round(65000 * Math.exp(-distFromAtm * 0.12));
-      const fallbackCallOi = i >= 0 ? baseOi + 35000 : Math.round(baseOi * 0.6);
-      const fallbackPutOi = i <= 0 ? baseOi + 38000 : Math.round(baseOi * 0.55);
+      let callLtp = 0;
+      let putLtp = 0;
+      let callOi = 0;
+      let putOi = 0;
 
-      let callLtp: number;
-      let putLtp: number;
-      let callOi: number;
-      let putOi: number;
-
-      if (live && (live.ceLtp > 0 || live.peLtp > 0 || live.ceOi > 0 || live.peOi > 0)) {
-        liveQuoteCount++;
-        callLtp = live.ceLtp > 0 ? live.ceLtp : calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'CE');
-        putLtp = live.peLtp > 0 ? live.peLtp : calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'PE');
-        callOi = live.ceOi > 0 ? live.ceOi : fallbackCallOi;
-        putOi = live.peOi > 0 ? live.peOi : fallbackPutOi;
-      } else {
-        callLtp = calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'CE');
-        putLtp = calculateBlackScholesPrice(resolvedSpot, strikePrice, tYears, 'PE');
-        callOi = fallbackCallOi;
-        putOi = fallbackPutOi;
+      if (live) {
+        if (live.ceLtp > 0) {
+          callLtp = live.ceLtp;
+          liveQuoteCount++;
+        }
+        if (live.peLtp > 0) {
+          putLtp = live.peLtp;
+          liveQuoteCount++;
+        }
+        if (live.ceOi !== undefined && live.ceOi > 0) {
+          callOi = live.ceOi;
+        }
+        if (live.peOi !== undefined && live.peOi > 0) {
+          putOi = live.peOi;
+        }
       }
 
       totalCallOi += callOi;
@@ -814,36 +812,24 @@ class NiftyOptionFeedService {
     if (!this.cachedBreakout180 || this.cachedBreakout180.date !== todayDateKey) {
       const atm = Math.round(spot / NIFTY_STRIKE_STEP) * NIFTY_STRIKE_STEP;
 
-      // Scan CE strikes from (ATM - 600) to (ATM + 200)
-      // Pick strike with highest premium that is STRICTLY < 180
-      let bestCeStrike = atm;
+      let bestCeStrike = atm + 100;
       let bestCePrice = 0;
-      for (let k = atm - 600; k <= atm + 200; k += NIFTY_STRIKE_STEP) {
-        const p = calculateBlackScholesPrice(spot, k, tYears, 'CE');
-        if (p < 180.00 && p > bestCePrice) {
-          bestCePrice = p;
-          bestCeStrike = k;
-        }
-      }
-      if (bestCePrice === 0) {
-        bestCeStrike = atm;
-        bestCePrice = 176.40;
-      }
-
-      // Scan PE strikes from (ATM - 200) to (ATM + 600)
-      // Pick strike with highest premium that is STRICTLY < 180
-      let bestPeStrike = atm;
+      let bestPeStrike = atm - 100;
       let bestPePrice = 0;
-      for (let k = atm - 200; k <= atm + 600; k += NIFTY_STRIKE_STEP) {
-        const p = calculateBlackScholesPrice(spot, k, tYears, 'PE');
-        if (p < 180.00 && p > bestPePrice) {
-          bestPePrice = p;
-          bestPeStrike = k;
+
+      // Scan actual live market feed quotes strictly from Dhan Option Chain
+      if (this.cachedLiveOptionChain && Object.keys(this.cachedLiveOptionChain).length > 0) {
+        for (const [strikeStr, data] of Object.entries(this.cachedLiveOptionChain)) {
+          const k = Number(strikeStr);
+          if (k >= atm - 600 && k <= atm + 200 && data.ceLtp > 0 && data.ceLtp < 180.00 && data.ceLtp > bestCePrice) {
+            bestCePrice = data.ceLtp;
+            bestCeStrike = k;
+          }
+          if (k >= atm - 200 && k <= atm + 600 && data.peLtp > 0 && data.peLtp < 180.00 && data.peLtp > bestPePrice) {
+            bestPePrice = data.peLtp;
+            bestPeStrike = k;
+          }
         }
-      }
-      if (bestPePrice === 0) {
-        bestPeStrike = atm;
-        bestPePrice = 172.10;
       }
 
       this.cachedBreakout180 = {
@@ -863,9 +849,9 @@ class NiftyOptionFeedService {
 
     const cache = this.cachedBreakout180;
 
-    // Calculate live pricing for candidate legs
-    const currentCeLtp = calculateBlackScholesPrice(spot, cache.ceStrike, tYears, 'CE');
-    const currentPeLtp = calculateBlackScholesPrice(spot, cache.peStrike, tYears, 'PE');
+    // Fetch actual live option prices strictly from market feed — NEVER derive from index
+    const currentCeLtp = this.getLiveOptionPrice(cache.ceStrike, 'CE');
+    const currentPeLtp = this.getLiveOptionPrice(cache.peStrike, 'PE');
 
     // STEP 2: Evaluate Breakout Trigger & Time Window
     let status: NiftyBreakout180State['status'] = 'MONITORING_BREAKOUT';

@@ -64,19 +64,42 @@ export function LiveOptionChainModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
+        {/* Full-screen Backdrop dismissal on touch outside */}
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+
         <View style={styles.content}>
+          {/* Top Drag Handle */}
+          <View style={styles.dragHandleContainer}>
+            <View style={styles.dragHandle} />
+          </View>
+
           {/* Header */}
           <View style={styles.header}>
-            <View style={{ flex: 1, marginRight: 8 }}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => {
+                Haptics.selectionAsync();
+                onClose();
+              }}
+              hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+            >
+              <Text style={styles.backButtonText}>← Back</Text>
+            </TouchableOpacity>
+
+            <View style={{ flex: 1, marginHorizontal: 8 }}>
               <View style={styles.titleRow}>
-                <Text style={styles.title}>{ticker} Live Option Chain</Text>
+                <Text style={styles.title}>{ticker} Option Chain</Text>
                 {chain?.isLiveMarketData ? (
                   <View style={[styles.badge, styles.liveBadge]}>
                     <Text style={styles.liveBadgeText}>🟢 LIVE DHAN</Text>
                   </View>
                 ) : (
                   <View style={[styles.badge, styles.estimatedBadge]}>
-                    <Text style={styles.estimatedBadgeText}>⚠️ THEORETICAL B-S</Text>
+                    <Text style={styles.estimatedBadgeText}>⚡ AWAITING FEED</Text>
                   </View>
                 )}
                 {chain?.rolledToNextExpiry && (
@@ -100,6 +123,7 @@ export function LiveOptionChainModal({
                 style={styles.refreshBtn}
                 onPress={() => loadOptionChain(true)}
                 disabled={isRefreshing}
+                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
               >
                 {isRefreshing ? (
                   <ActivityIndicator size="small" color={colors.cyan} />
@@ -107,7 +131,14 @@ export function LiveOptionChainModal({
                   <Text style={styles.refreshIcon}>🔄</Text>
                 )}
               </TouchableOpacity>
-              <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={() => {
+                  Haptics.selectionAsync();
+                  onClose();
+                }}
+                hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+              >
                 <Text style={styles.closeText}>✕</Text>
               </TouchableOpacity>
             </View>
@@ -131,11 +162,11 @@ export function LiveOptionChainModal({
             </View>
           )}
 
-          {/* Theoretical Notice Banner if Dhan token not streaming */}
+          {/* Pre-Market / Live Market Notice Banner */}
           {chain && !chain.isLiveMarketData && (
             <View style={styles.offlineNoticeBanner}>
               <Text style={styles.offlineNoticeText}>
-                ⚠️ <Text style={{ fontWeight: '800' }}>THEORETICAL ESTIMATION:</Text> Live Dhan HQ Option Chain unavailable (Market closed or Token unconfigured). To view tick-by-tick real quotes, verify Client ID & Token in Settings.
+                ⚡ <Text style={{ fontWeight: '800' }}>LIVE EXCHANGE DATA ONLY:</Text> F&O contracts trade from 09:15 to 15:30 IST. Showing real exchange quotes only (never mathematical or index-derived synthetic estimates).
               </Text>
             </View>
           )}
@@ -235,10 +266,10 @@ export function LiveOptionChainModal({
                           <Text style={styles.oobtstBadgeTextCe}>⭐ 09:20 OOBTST CE</Text>
                         </View>
                       )}
-                      <Text style={[styles.callPrice, { color: colors.bullish }, isOobtstCe && styles.boldOobtstPrice]}>
-                        ₹{s.callLtp.toFixed(2)}
+                      <Text style={[styles.callPrice, { color: s.callLtp > 0 ? colors.bullish : colors.textMuted }, isOobtstCe && styles.boldOobtstPrice]}>
+                        {s.callLtp > 0 ? `₹${s.callLtp.toFixed(2)}` : '₹--'}
                       </Text>
-                      <Text style={styles.oiText}>{(s.callOi / 1000).toFixed(0)}k oi</Text>
+                      <Text style={styles.oiText}>{s.callOi > 0 ? `${(s.callOi / 1000).toFixed(0)}k oi` : '-- oi'}</Text>
                     </TouchableOpacity>
 
                     {/* Strike Center */}
@@ -265,17 +296,30 @@ export function LiveOptionChainModal({
                           <Text style={styles.oobtstBadgeTextPe}>⭐ 09:20 OOBTST PE</Text>
                         </View>
                       )}
-                      <Text style={[styles.putPrice, { color: colors.bearish }, isOobtstPe && styles.boldOobtstPrice]}>
-                        ₹{s.putLtp.toFixed(2)}
+                      <Text style={[styles.putPrice, { color: s.putLtp > 0 ? colors.bearish : colors.textMuted }, isOobtstPe && styles.boldOobtstPrice]}>
+                        {s.putLtp > 0 ? `₹${s.putLtp.toFixed(2)}` : '₹--'}
                       </Text>
-                      <Text style={styles.oiText}>{(s.putOi / 1000).toFixed(0)}k oi</Text>
+                      <Text style={styles.oiText}>{s.putOi > 0 ? `${(s.putOi / 1000).toFixed(0)}k oi` : '-- oi'}</Text>
                     </TouchableOpacity>
                   </View>
                 );
               })}
-              <View style={{ height: 40 }} />
+              <View style={{ height: 20 }} />
             </ScrollView>
           )}
+
+          {/* Sticky Bottom Close Button */}
+          <View style={styles.bottomBar}>
+            <TouchableOpacity
+              style={styles.bottomCloseBtn}
+              onPress={() => {
+                Haptics.selectionAsync();
+                onClose();
+              }}
+            >
+              <Text style={styles.bottomCloseBtnText}>← Close Option Chain & Return</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </Modal>
@@ -296,13 +340,35 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.cardBorder,
   },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  dragHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.cardBorder,
+  },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.divider,
+  },
+  backButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceSubtle,
+  },
+  backButtonText: {
+    color: colors.cyan,
+    fontSize: 13,
+    fontWeight: '700',
   },
   titleRow: {
     flexDirection: 'row',
@@ -398,9 +464,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.surfaceHover,
     alignItems: 'center',
     justifyContent: 'center',
@@ -408,6 +474,26 @@ const styles = StyleSheet.create({
   closeText: {
     color: colors.textSecondary,
     fontSize: 16,
+    fontWeight: '700',
+  },
+  bottomBar: {
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    backgroundColor: colors.surface,
+  },
+  bottomCloseBtn: {
+    backgroundColor: colors.surfaceSubtle,
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  bottomCloseBtnText: {
+    color: colors.textPrimary,
+    fontSize: 14,
     fontWeight: '700',
   },
   offlineNoticeBanner: {
