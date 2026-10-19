@@ -82,6 +82,16 @@ function tryExtractCredentials(raw: any, depth = 0): { clientId: string; token: 
     if (jwtMatches && jwtMatches.length > 0) {
       for (const jwt of jwtMatches) {
         const payload = decodeJwtPayload(jwt);
+        if (!payload) continue;
+
+        // Strict expiration check: reject expired tokens
+        if (payload.exp && typeof payload.exp === 'number') {
+          const nowSec = Math.floor(Date.now() / 1000);
+          if (payload.exp <= nowSec) {
+            continue; // Token is expired, reject it
+          }
+        }
+
         const clientId =
           payload?.dhanClientId ||
           payload?.clientId ||
@@ -125,17 +135,15 @@ function tryExtractCredentials(raw: any, depth = 0): { clientId: string; token: 
         const eqIdx = pair.indexOf('=');
         if (eqIdx !== -1) {
           const val = pair.slice(eqIdx + 1).trim();
-          const creds = tryExtractCredentials(val, depth + 1);
-          if (creds) return creds;
+          if (val.includes('eyJ') || val.length > 40) {
+            const creds = tryExtractCredentials(val, depth + 1);
+            if (creds) return creds;
+          }
         }
       }
     }
 
-    // 1E. If it's a raw token string of sufficient length (> 30 chars and not markup/script)
-    if (trimmed.length > 30 && !trimmed.includes(' ') && !trimmed.includes('<') && !trimmed.includes('{')) {
-      return { clientId: '', token: trimmed, name: 'Dhan Trader' };
-    }
-
+    // Rule 1E removed: Never treat arbitrary strings as tokens without JWT or explicit Dhan payload
     return null;
   }
 
@@ -180,6 +188,14 @@ function tryExtractCredentials(raw: any, depth = 0): { clientId: string; token: 
             name: rawName ? String(rawName) : creds.name,
           };
         }
+        // If candidate is a token accompanied by confirmed rawClientId
+        if (rawClientId && cand.length >= 20 && !cand.includes(' ') && !cand.includes('<') && !cand.includes('{')) {
+          return {
+            clientId: String(rawClientId),
+            token: cand,
+            name: rawName ? String(rawName) : 'Dhan Trader',
+          };
+        }
       }
     }
 
@@ -195,10 +211,23 @@ function tryExtractCredentials(raw: any, depth = 0): { clientId: string; token: 
       }
     }
 
-    // Deep scan all object keys
+    // Deep scan only object keys that could plausibly contain tokens or encrypted values
     for (const key of Object.keys(raw)) {
       const val = raw[key];
-      if (val) {
+      const lowerKey = key.toLowerCase();
+      if (
+        typeof val === 'string' &&
+        (val.includes('eyJ') || lowerKey.includes('token') || lowerKey.includes('user') || lowerKey.includes('auth'))
+      ) {
+        const creds = tryExtractCredentials(val, depth + 1);
+        if (creds) {
+          return {
+            clientId: rawClientId ? String(rawClientId) : creds.clientId,
+            token: creds.token,
+            name: rawName ? String(rawName) : creds.name,
+          };
+        }
+      } else if (typeof val === 'object' && val !== null && depth < 2) {
         const creds = tryExtractCredentials(val, depth + 1);
         if (creds) {
           return {
@@ -319,12 +348,15 @@ const DESKTOP_VIEWPORT_INJECTION = `
       window.localStorage.setItem = function(key, val) {
         origLocalSet.apply(this, arguments);
         try {
-          if (key === 'userdata' || key === 'JWTtoken' || key === 'TxnToken' || key === 'first_auth' || key === 'token' || (val && typeof val === 'string' && val.indexOf('eyJ') !== -1)) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'DHAN_ENCRYPTED_STORAGE',
-              key: key,
-              value: val
-            }));
+          var href = (window.location.href || '').toLowerCase();
+          if (href.indexOf('login') === -1 && href.indexOf('auth') === -1) {
+            if (key === 'userdata' || key === 'JWTtoken' || key === 'TxnToken' || key === 'first_auth' || key === 'token' || (val && typeof val === 'string' && val.indexOf('eyJ') !== -1)) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'DHAN_ENCRYPTED_STORAGE',
+                key: key,
+                value: val
+              }));
+            }
           }
         } catch(e) {}
       };
@@ -335,12 +367,15 @@ const DESKTOP_VIEWPORT_INJECTION = `
       window.sessionStorage.setItem = function(key, val) {
         origSessionSet.apply(this, arguments);
         try {
-          if (key === 'userdata' || key === 'JWTtoken' || key === 'TxnToken' || key === 'first_auth' || key === 'token' || (val && typeof val === 'string' && val.indexOf('eyJ') !== -1)) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'DHAN_ENCRYPTED_STORAGE',
-              key: key,
-              value: val
-            }));
+          var href = (window.location.href || '').toLowerCase();
+          if (href.indexOf('login') === -1 && href.indexOf('auth') === -1) {
+            if (key === 'userdata' || key === 'JWTtoken' || key === 'TxnToken' || key === 'first_auth' || key === 'token' || (val && typeof val === 'string' && val.indexOf('eyJ') !== -1)) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'DHAN_ENCRYPTED_STORAGE',
+                key: key,
+                value: val
+              }));
+            }
           }
         } catch(e) {}
       };
@@ -351,8 +386,23 @@ const DESKTOP_VIEWPORT_INJECTION = `
 
 const INJECTED_TOKEN_INTERCEPTOR = `
   (function() {
+    function isLoginPage() {
+      try {
+        var href = (window.location.href || '').toLowerCase();
+        var path = (window.location.pathname || '').toLowerCase();
+        return href.indexOf('login') !== -1 || href.indexOf('auth') !== -1 || href.indexOf('signin') !== -1 || path.indexOf('login') !== -1;
+      } catch(e) {
+        return false;
+      }
+    }
+
     function checkStorage() {
       try {
+        // NEVER auto-check or auto-dump while on login screen!
+        if (isLoginPage()) {
+          return;
+        }
+
         var dump = {};
         var keys = ['userdata', 'JWTtoken', 'token', 'first_auth', 'TxnToken', 'access_token', 'auth'];
         for (var i = 0; i < keys.length; i++) {
@@ -370,7 +420,7 @@ const INJECTED_TOKEN_INTERCEPTOR = `
           var lk = window.localStorage.key(m);
           if (lk) {
             var val = window.localStorage.getItem(lk);
-            if (val && val.indexOf('eyJ') !== -1) {
+            if (val && typeof val === 'string' && val.indexOf('eyJ') !== -1) {
               dump['ls_' + lk] = val;
             }
           }
@@ -379,7 +429,7 @@ const INJECTED_TOKEN_INTERCEPTOR = `
           var sk = window.sessionStorage.key(n);
           if (sk) {
             var sval = window.sessionStorage.getItem(sk);
-            if (sval && sval.indexOf('eyJ') !== -1) {
+            if (sval && typeof sval === 'string' && sval.indexOf('eyJ') !== -1) {
               dump['ss_' + sk] = sval;
             }
           }
@@ -394,8 +444,10 @@ const INJECTED_TOKEN_INTERCEPTOR = `
       } catch(e) {}
     }
 
-    var poll = setInterval(checkStorage, 1200);
-    checkStorage();
+    // Only start polling 2.5 seconds after page loads, and never on login page
+    setTimeout(function() {
+      setInterval(checkStorage, 2000);
+    }, 2500);
   })();
   true;
 `;
@@ -404,6 +456,7 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
   const [loading, setLoading] = useState(true);
   const [isCapturing, setIsCapturing] = useState(false);
   const capturedRef = useRef(false);
+  const currentUrlRef = useRef('https://web.dhan.co/login');
   const webViewRef = useRef<WebView>(null);
 
   useEffect(() => {
@@ -411,6 +464,7 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
       capturedRef.current = false;
       setIsCapturing(false);
       setLoading(true);
+      currentUrlRef.current = 'https://web.dhan.co/login';
     }
   }, [visible]);
 
@@ -420,10 +474,45 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
     onClose();
   };
 
+  const handleFreshLogin = () => {
+    capturedRef.current = false;
+    setIsCapturing(false);
+    if (webViewRef.current) {
+      webViewRef.current.injectJavaScript(`
+        (function() {
+          try {
+            window.localStorage.clear();
+            window.sessionStorage.clear();
+            var cookies = document.cookie.split(";");
+            for (var i = 0; i < cookies.length; i++) {
+              var cookie = cookies[i];
+              var eqPos = cookie.indexOf("=");
+              var name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+              document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+              document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.dhan.co";
+            }
+          } catch(e) {}
+          window.location.href = 'https://web.dhan.co/login';
+        })();
+        true;
+      `);
+      setLoading(true);
+    }
+  };
+
   const handleMessage = async (event: any) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       let creds: { clientId: string; token: string; name: string } | null = null;
+
+      // Guard against auto-closing while the user is still on the login page!
+      const currentUrl = (currentUrlRef.current || '').toLowerCase();
+      const isOnLoginPage = currentUrl.includes('login') || currentUrl.includes('auth') || currentUrl.includes('signin');
+
+      if (data.type !== 'DHAN_STORAGE_DUMP' && isOnLoginPage) {
+        // User is still entering mobile number, OTP, or PIN. Do not auto-dismiss!
+        return;
+      }
 
       if (data.type === 'DHAN_LOGIN_SUCCESS' && data.payload?.token) {
         creds = {
@@ -613,6 +702,14 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
           </View>
 
           <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.freshLoginBtn}
+              onPress={handleFreshLogin}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.freshLoginBtnText}>🧹 Fresh Login</Text>
+            </TouchableOpacity>
             <TouchableOpacity style={styles.iconBtn} onPress={handleReload}>
               <Text style={styles.iconBtnText}>↻</Text>
             </TouchableOpacity>
@@ -638,7 +735,7 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
         <View style={styles.webViewContainer}>
           <WebView
             ref={webViewRef}
-            source={{ uri: 'https://web.dhan.co' }}
+            source={{ uri: 'https://web.dhan.co/login' }}
             userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             javaScriptEnabled={true}
             domStorageEnabled={true}
@@ -647,6 +744,9 @@ export function DhanWebLoginModal({ visible, onClose, onSuccess }: DhanWebLoginM
             injectedJavaScript={INJECTED_TOKEN_INTERCEPTOR}
             scalesPageToFit={true}
             setSupportMultipleWindows={false}
+            onNavigationStateChange={(navState) => {
+              currentUrlRef.current = navState.url;
+            }}
             onMessage={handleMessage}
             onLoadStart={() => setLoading(true)}
             onLoadEnd={() => setLoading(false)}
@@ -735,6 +835,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+  },
+  freshLoginBtn: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: 'rgba(234, 179, 8, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(234, 179, 8, 0.35)',
+  },
+  freshLoginBtnText: {
+    color: '#EAB308',
+    fontSize: 11,
+    fontWeight: '700',
   },
   iconBtn: {
     paddingHorizontal: 10,
