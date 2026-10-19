@@ -292,17 +292,23 @@ class DhanWebStreamer {
       return;
     }
 
+    let delayMs = 0;
     this.registeredInstruments.forEach((instr) => {
-      const packet = buildDhanWebSubscribePacket(
-        creds.clientId,
-        creds.token,
-        instr.securityId,
-        instr.exchange,
-        instr.segment,
-        instr.mode,
-        creds.tabId
-      );
-      this.socket?.send(packet);
+      setTimeout(() => {
+        if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+          const packet = buildDhanWebSubscribePacket(
+            creds.clientId,
+            creds.token,
+            instr.securityId,
+            instr.exchange,
+            instr.segment,
+            instr.mode,
+            creds.tabId
+          );
+          this.socket.send(packet);
+        }
+      }, delayMs);
+      delayMs += 15; // smooth 15ms pace: all 60 stocks register in under 1 second cleanly
     });
   }
 

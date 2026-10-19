@@ -28,6 +28,7 @@ export interface DhanLiveTickData {
   high: number;
   low: number;
   close: number;
+  prevClose?: number;
   volume: number;
   change: number;
   changePercent: number;
@@ -276,11 +277,65 @@ export function decodeDhanWebBinaryFeed(buffer: ArrayBuffer): DhanLiveTickData[]
       });
     }
 
-    // TYPE 3: Market Depth / Level 2 Packet (27+ bytes)
-    // Note: Dhan Code 3 is Market Depth, NOT OHLC.
-    // Parsing depth bytes as floats previously caused bogus values (e.g. 85%) to be emitted as changePercent.
+    // TYPE 3: Day OHLC & Baseline Packet (27 bytes)
     else if (packetType === 3 && remaining.byteLength >= 27) {
-      // Discard depth packet from equity LTP/OHLC tick processing
+      const segId = new Uint8Array(remaining.slice(0, 1))[0].toString();
+      const secId = new Uint32Array(remaining.slice(1, 5))[0].toString();
+      const open = Number(new Float32Array(remaining.slice(11, 15))[0].toFixed(2));
+      const prevClose = Number(new Float32Array(remaining.slice(15, 19))[0].toFixed(2));
+      const high = Number(new Float32Array(remaining.slice(19, 23))[0].toFixed(2));
+      const low = Number(new Float32Array(remaining.slice(23, 27))[0].toFixed(2));
+
+      const exch = segId === '4' ? 'BSE' : 'NSE';
+      const seg = segId === '2' ? 'D' : 'E';
+      const key = `${secId}-${seg}-${exch}`;
+
+      ticks.push({
+        key,
+        securityId: secId,
+        exchange: exch,
+        segment: seg,
+        ltp: 0, // Baseline packet; do not overwrite live LTP
+        open: open > 0 ? open : 0,
+        high: high > 0 ? high : 0,
+        low: low > 0 ? low : 0,
+        close: prevClose > 0 ? prevClose : 0,
+        prevClose: prevClose > 0 ? prevClose : undefined,
+        volume: 0,
+        change: 0,
+        changePercent: 0,
+        lastUpdated: nowStr,
+      });
+    }
+
+    // TYPE 32: Official Previous Day Close Packet (19 bytes)
+    else if (packetType === 32 && remaining.byteLength >= 19) {
+      const segId = new Uint8Array(remaining.slice(0, 1))[0].toString();
+      const secId = new Uint32Array(remaining.slice(1, 5))[0].toString();
+      const prevClose = Number(new Float32Array(remaining.slice(11, 15))[0].toFixed(2));
+
+      const exch = segId === '4' ? 'BSE' : 'NSE';
+      const seg = segId === '2' ? 'D' : 'E';
+      const key = `${secId}-${seg}-${exch}`;
+
+      if (prevClose > 0) {
+        ticks.push({
+          key,
+          securityId: secId,
+          exchange: exch,
+          segment: seg,
+          ltp: 0, // Baseline-only packet; do not overwrite live LTP
+          open: 0,
+          high: 0,
+          low: 0,
+          close: prevClose,
+          prevClose,
+          volume: 0,
+          change: 0,
+          changePercent: 0,
+          lastUpdated: nowStr,
+        });
+      }
     }
 
     // TYPE 5: Spot Index Tick (31+ bytes) e.g. NIFTY 50
@@ -305,6 +360,7 @@ export function decodeDhanWebBinaryFeed(buffer: ArrayBuffer): DhanLiveTickData[]
         high,
         low,
         close: prevClose > 0 ? prevClose : ltp,
+        prevClose: prevClose > 0 ? prevClose : undefined,
         volume: 0,
         change,
         changePercent,

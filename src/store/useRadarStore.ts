@@ -227,20 +227,84 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
       const isBreakoutActive = breakout && breakout.status === 'IN_TRADE';
       const signalsTodayCount = greenCount + redCount + (isOvernightActive ? 1 : 0) + (isBreakoutActive ? 1 : 0);
 
-      set((prev) => ({
-        marketStatus: session.status,
-        istTime: session.istTime,
-        stocks,
-        niftySpot: resolvedSpot,
-        niftyOvernight: overnight,
-        oobtstState: liveOobtst,
-        niftyBreakout180: breakout,
-        signalsTodayCount,
-        feedStatus: telemetry.status,
-        lastTickTime: telemetry.lastTickTime || session.istTime,
-        journal: newJournalEntries.length > 0 ? [...newJournalEntries, ...prev.journal] : prev.journal,
-        isRefreshing: false,
-      }));
+      set((prev) => {
+        const existingMap = new Map(prev.stocks.map((s) => [s.ticker, s]));
+        const mergedStocks = stocks.map((newStock) => {
+          const existing = existingMap.get(newStock.ticker);
+          if (!existing) return newStock;
+
+          // Preserve live non-zero spot price against placeholder approxLtp
+          const spotPrice = (existing.spotPrice > 0 && (!newStock.spotPrice || newStock.spotPrice === existing.spotPrice))
+            ? existing.spotPrice
+            : (newStock.spotPrice > 0 ? newStock.spotPrice : existing.spotPrice);
+
+          // Preserve verified previous close
+          const prevClose = (newStock.prevClose && newStock.prevClose > 0)
+            ? newStock.prevClose
+            : (existing.prevClose && existing.prevClose > 0 ? existing.prevClose : undefined);
+
+          const dayOpen = (newStock.dayOpen && newStock.dayOpen > 0)
+            ? newStock.dayOpen
+            : (existing.dayOpen && existing.dayOpen > 0 ? existing.dayOpen : spotPrice);
+
+          const dayHigh = Math.max(newStock.dayHigh || 0, existing.dayHigh || 0, spotPrice);
+          const dayLow = Math.min(
+            newStock.dayLow > 0 ? newStock.dayLow : spotPrice,
+            existing.dayLow > 0 ? existing.dayLow : spotPrice
+          );
+
+          // Traded volume: Monotonic guarantee, never overwrite live volume with 0
+          const todayTradedShares = Math.max(newStock.todayTradedShares || 0, existing.todayTradedShares || 0);
+          const avgShares = newStock.avg20DTradedShares || existing.avg20DTradedShares || 1;
+          const volumeRatio = todayTradedShares > 0 ? +(todayTradedShares / avgShares).toFixed(3) : 0;
+          const hasCrossed = todayTradedShares >= avgShares && todayTradedShares > 0;
+
+          // Compute genuine price percentage change
+          const percentChange = (prevClose && prevClose > 0 && spotPrice > 0)
+            ? +(((spotPrice - prevClose) / prevClose) * 100).toFixed(2)
+            : (newStock.percentChange !== 0 ? newStock.percentChange : existing.percentChange);
+
+          const isBullish = percentChange >= 0 || spotPrice >= dayOpen;
+          let circleIndicator: 'GREEN' | 'RED' | 'AMBER' | 'GREY' = 'GREY';
+          if (hasCrossed) {
+            circleIndicator = isBullish ? 'GREEN' : 'RED';
+          } else if (volumeRatio >= 0.8) {
+            circleIndicator = 'AMBER';
+          }
+
+          return {
+            ...newStock,
+            spotPrice,
+            prevClose,
+            dayOpen,
+            dayHigh,
+            dayLow,
+            percentChange,
+            todayTradedShares,
+            avg20DTradedShares: avgShares,
+            volumeRatio,
+            hasCrossed20D: hasCrossed,
+            crossoverTime: hasCrossed ? (existing.crossoverTime || newStock.crossoverTime || new Date().toLocaleTimeString('en-IN')) : undefined,
+            crossoverDirection: (isBullish ? 'BULLISH' : 'BEARISH') as 'BULLISH' | 'BEARISH',
+            circleIndicator,
+          };
+        });
+
+        return {
+          marketStatus: session.status,
+          istTime: session.istTime,
+          stocks: mergedStocks,
+          niftySpot: resolvedSpot,
+          niftyOvernight: overnight,
+          oobtstState: liveOobtst,
+          niftyBreakout180: breakout,
+          signalsTodayCount,
+          feedStatus: telemetry.status,
+          lastTickTime: telemetry.lastTickTime || session.istTime,
+          journal: newJournalEntries.length > 0 ? [...newJournalEntries, ...prev.journal] : prev.journal,
+          isRefreshing: false,
+        };
+      });
     } catch {
       set({ isRefreshing: false });
     }
@@ -307,32 +371,55 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
         const nextStocks = currentStocks.map((stock) => {
           const secId = getDhanSecurityId(stock.ticker);
           const tick = tickBatch[secId] || tickBatch[`${secId}-E-NSE`];
-          if (!tick || tick.ltp <= 0) return stock;
+          if (!tick) return stock;
+
+          let stockUpdated = false;
+
+          // 1. Capture official PrevClose from Packet Type 32 or Type 3
+          let prevClose = stock.prevClose || 0;
+          if (tick.prevClose && tick.prevClose > 0) {
+            prevClose = tick.prevClose;
+            stockUpdated = true;
+          } else if (tick.close && tick.close > 0 && prevClose <= 0) {
+            prevClose = tick.close;
+            stockUpdated = true;
+          }
+
+          // 2. Capture day open, high, low from Packet Type 3
+          const dayOpen = tick.open && tick.open > 0 ? tick.open : stock.dayOpen;
+          if (tick.open && tick.open > 0 && dayOpen !== stock.dayOpen) stockUpdated = true;
+
+          // 3. Capture live LTP from Packet Type 1
+          const spotPrice = tick.ltp && tick.ltp > 0 ? tick.ltp : stock.spotPrice;
+          if (tick.ltp && tick.ltp > 0 && spotPrice !== stock.spotPrice) stockUpdated = true;
+
+          const dayHigh = Math.max(stock.dayHigh || 0, tick.high || 0, spotPrice);
+          const dayLow = Math.min(
+            stock.dayLow > 0 ? stock.dayLow : spotPrice,
+            tick.low && tick.low > 0 ? tick.low : spotPrice,
+            spotPrice
+          );
+
+          // 4. Capture cumulative day volume from Packet Type 1 (never reset to 0)
+          const todayTradedShares = tick.volume && tick.volume > 0 ? tick.volume : stock.todayTradedShares;
+          if (tick.volume && tick.volume > 0 && todayTradedShares !== stock.todayTradedShares) stockUpdated = true;
+
+          if (!stockUpdated) return stock;
 
           stockTickFound = true;
           hasChanged = true;
-          const spotPrice = tick.ltp;
-          const dayOpen = tick.open > 0 ? tick.open : stock.dayOpen;
-          const dayHigh = tick.high > 0 ? tick.high : Math.max(spotPrice, stock.dayHigh);
-          const dayLow = tick.low > 0 ? tick.low : Math.min(spotPrice, stock.dayLow);
-          const todayTradedShares = tick.volume > 0 ? tick.volume : stock.todayTradedShares;
+
           const avgShares = stock.avg20DTradedShares || 1;
-          const ratio = +(todayTradedShares / avgShares).toFixed(3);
+          const ratio = todayTradedShares > 0 ? +(todayTradedShares / avgShares).toFixed(3) : 0;
           const hasCrossed = todayTradedShares >= avgShares && todayTradedShares > 0;
 
-          // Determine accurate baseline for percentage change calculation
-          // Priority: stock.prevClose > dayOpen > spotPrice
-          const prevClose = (stock.prevClose && stock.prevClose > 0)
-            ? stock.prevClose
-            : (dayOpen > 0 ? dayOpen : spotPrice);
-
-          // Compute genuine intraday price percentage change strictly from live spotPrice against prevClose
-          const pctChange = (prevClose > 0 && spotPrice > 0)
-            ? +(((spotPrice - prevClose) / prevClose) * 100).toFixed(2)
+          // Determine accurate priceChangePct strictly from spotPrice and verified prevClose
+          const baselineClose = prevClose > 0 ? prevClose : (dayOpen > 0 ? dayOpen : stock.spotPrice);
+          const pctChange = (baselineClose > 0 && spotPrice > 0)
+            ? +(((spotPrice - baselineClose) / baselineClose) * 100).toFixed(2)
             : stock.percentChange;
 
           const isBullish = pctChange >= 0 || spotPrice >= dayOpen;
-
           let circleIndicator: 'GREEN' | 'RED' | 'AMBER' | 'GREY' = 'GREY';
           if (hasCrossed) {
             circleIndicator = isBullish ? 'GREEN' : 'RED';
@@ -343,7 +430,7 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
           return {
             ...stock,
             spotPrice,
-            prevClose,
+            prevClose: baselineClose,
             dayOpen,
             dayHigh,
             dayLow,
@@ -352,7 +439,7 @@ export const useRadarStore = create<RadarStoreState>((set, get) => ({
             avg20DTradedShares: avgShares,
             volumeRatio: ratio,
             hasCrossed20D: hasCrossed,
-            crossoverTime: hasCrossed ? (tick.lastUpdated || stock.crossoverTime) : stock.crossoverTime,
+            crossoverTime: hasCrossed ? (tick.lastUpdated || stock.crossoverTime || new Date().toLocaleTimeString('en-IN')) : stock.crossoverTime,
             crossoverDirection: (isBullish ? 'BULLISH' : 'BEARISH') as 'BULLISH' | 'BEARISH',
             circleIndicator,
           };

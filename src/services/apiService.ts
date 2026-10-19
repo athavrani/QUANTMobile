@@ -96,14 +96,14 @@ export const apiService = {
       const dayOpen = q && q.open > 0 ? q.open : spotPrice;
       const dayHigh = q && q.high > 0 ? q.high : spotPrice;
       const dayLow = q && q.low > 0 ? q.low : spotPrice;
-      const todayShares = isBeforeOpen ? 0 : (q ? q.volume : 0);
+      const todayShares = (q && q.volume > 0) ? q.volume : 0;
       const avgShares = m.avg20DTradedShares || 1;
       const ratio = todayShares > 0 ? +(todayShares / avgShares).toFixed(3) : 0;
       const hasCrossed = todayShares >= avgShares && todayShares > 0;
       const prevClose = (q && q.prevClose && q.prevClose > 0)
         ? q.prevClose
-        : (q && q.close > 0 ? q.close : (m.approxLtp > 0 ? m.approxLtp : dayOpen));
-      const pctChange = (prevClose > 0 && spotPrice > 0)
+        : (q && q.close && q.close > 0 ? q.close : undefined);
+      const pctChange = (prevClose && prevClose > 0 && spotPrice > 0)
         ? +(((spotPrice - prevClose) / prevClose) * 100).toFixed(2)
         : (q && q.changePercent !== undefined ? q.changePercent : 0);
       const isBullish = pctChange >= 0 || spotPrice >= dayOpen;

@@ -388,16 +388,13 @@ class DhanDirectService {
             if (prevClose <= 0 && ltp > 0 && netChange !== 0) {
               prevClose = +(ltp - netChange).toFixed(2);
             }
-            if (prevClose <= 0 && item.close) {
+            if (prevClose <= 0 && item.close && Number(item.close) !== ltp) {
               prevClose = Number(item.close);
-            }
-            if (prevClose <= 0) {
-              prevClose = ltp;
             }
 
             const changePercent = prevClose > 0 && ltp > 0
               ? +(((ltp - prevClose) / prevClose) * 100).toFixed(2)
-              : 0;
+              : (netChange !== 0 && ltp > 0 && (ltp - netChange) > 0 ? +((netChange / (ltp - netChange)) * 100).toFixed(2) : 0);
 
             const volume = Number(item.volume || 0);
 
@@ -408,8 +405,8 @@ class DhanDirectService {
               open,
               high,
               low,
-              close: prevClose, // maintain close as previous close for consistent radar baselines
-              prevClose,
+              close: prevClose > 0 ? prevClose : ltp,
+              prevClose: prevClose > 0 ? prevClose : undefined,
               netChange,
               changePercent,
               volume,
