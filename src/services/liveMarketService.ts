@@ -1,4 +1,9 @@
-import { API_CONFIG } from '../config/apiConfig';
+// =====================================================================
+// QuantMobile — Institutional Live Option Chain Service
+// Direct Mobile-to-Dhan HQ Data API Engine (Zero Middleman)
+// Official DhanHQ Data API /v2/optionchain Integration
+// =====================================================================
+
 import { niftyOptionFeedService } from './niftyOptionFeedService';
 import { dhanDirectService } from './dhanDirectService';
 
@@ -40,70 +45,35 @@ export interface LiveOptionChainSummary {
   oobtstCeOpen?: number;
   oobtstPeOpen?: number;
   isLiveMarketData?: boolean;
-  dataSource?: 'DHAN_LIVE' | 'BLACK_SCHOLES_FALLBACK';
+  dataSource?: 'DHAN_LIVE' | 'OFFLINE';
   lastSyncTime?: number;
   strikes: OptionStrikeRow[];
 }
 
 export const liveMarketService = {
-  // 1. Fetch live quotes for batch of tickers
+  // 1. Fetch live quotes for batch of tickers via direct DhanHQ Data API
   async fetchLiveQuotes(tickers?: string[]): Promise<Record<string, any>> {
+    if (!tickers || tickers.length === 0) return {};
     try {
-      const res = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.STOCK_QUOTE}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tickers }),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json.quotes) return json.quotes;
-      }
-    } catch (err) {
-      // Fallback: Query Supabase Cloud live_tick_snapshots directly
-      try {
-        const sbRes = await fetch(
-          `https://cmcgvadapaoapxrxdcau.supabase.co/rest/v1/live_tick_snapshots?select=*`,
-          {
-            headers: {
-              apikey: 'sb_publishable_SVF3AyZbDDIIT5v5QLi0AA_kz_uuXj6',
-              Authorization: 'Bearer sb_publishable_SVF3AyZbDDIIT5v5QLi0AA_kz_uuXj6',
-            },
-          }
-        );
-        if (sbRes.ok) {
-          const rows = await sbRes.json();
-          const quotes: Record<string, any> = {};
-          for (const r of rows) {
-            quotes[r.ticker] = {
-              ltp: r.ltp,
-              volume: r.volume,
-              open: r.open,
-              high: r.high,
-              low: r.low,
-              close: r.close,
-              changePct: r.change_pct,
-            };
-          }
-          return quotes;
-        }
-      } catch {}
+      return await dhanDirectService.fetchDirectBatchQuotes(tickers);
+    } catch {
+      return {};
     }
-    return {};
   },
 
-  // 2. Fetch live multi-strike option chain directly from Dhan HQ with seamless fallback
+  // 2. Fetch live multi-strike option chain directly from Dhan HQ Data API
   async fetchLiveOptionChain(
     ticker: string = 'NIFTY',
     spotLtp: number = 23146.15,
     strikeStep: number = 50,
     forOobtst: boolean = true
   ): Promise<LiveOptionChainSummary> {
-    // 1. Sync live option chain from Dhan HQ API if available
+    // 1. Sync live option chain from Dhan HQ API (/v2/optionchain)
     try {
       await niftyOptionFeedService.syncLiveOptionChain(ticker);
     } catch {}
 
-    // 2. Resolve live spot price if passed value is fallback/zero
+    // 2. Resolve live spot price
     let resolvedSpot = spotLtp;
     const lastLiveSpot = niftyOptionFeedService.getLastLiveSpot();
     if (lastLiveSpot && lastLiveSpot > 0 && (!resolvedSpot || resolvedSpot <= 0 || resolvedSpot === 23146.15)) {
@@ -124,25 +94,6 @@ export const liveMarketService = {
       12,
       forOobtst
     );
-
-    // 4. Remote backend fallback if external gateway is configured
-    if (process.env.EXPO_PUBLIC_API_URL && !localMatrix.isLiveMarketData) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 600);
-        const res = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.OPTION_CHAIN}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticker, spotLtp: resolvedSpot, strikeStep }),
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.matrix) return json.matrix;
-        }
-      } catch {}
-    }
 
     return localMatrix as LiveOptionChainSummary;
   },

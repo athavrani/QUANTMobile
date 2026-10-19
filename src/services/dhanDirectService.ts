@@ -481,7 +481,21 @@ class DhanDirectService {
     underlyingTicker: string = 'NIFTY'
   ): Promise<{
     spotPrice?: number;
-    oc: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }>;
+    oc: Record<
+      number,
+      {
+        ceLtp: number;
+        peLtp: number;
+        ceOi: number;
+        peOi: number;
+        ceIv?: number;
+        peIv?: number;
+        ceBid?: number;
+        ceAsk?: number;
+        peBid?: number;
+        peAsk?: number;
+      }
+    >;
   } | null> {
     await this.initialize();
     if (!this.cachedClientId || !this.cachedAccessToken) return null;
@@ -552,15 +566,37 @@ class DhanDirectService {
       const oc = json?.data?.oc;
       if (!oc || typeof oc !== 'object') return null;
 
-      const result: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }> = {};
+      const result: Record<
+        number,
+        {
+          ceLtp: number;
+          peLtp: number;
+          ceOi: number;
+          peOi: number;
+          ceIv?: number;
+          peIv?: number;
+          ceBid?: number;
+          ceAsk?: number;
+          peBid?: number;
+          peAsk?: number;
+        }
+      > = {};
       for (const [strikeStr, data] of Object.entries(oc as Record<string, any>)) {
         const strike = Math.round(parseFloat(strikeStr));
         if (!isNaN(strike)) {
+          const ceLtp = Number(data.ce?.last_price || 0);
+          const peLtp = Number(data.pe?.last_price || 0);
           result[strike] = {
-            ceLtp: Number(data.ce?.last_price || 0),
-            peLtp: Number(data.pe?.last_price || 0),
+            ceLtp,
+            peLtp,
             ceOi: Number(data.ce?.oi || 0),
             peOi: Number(data.pe?.oi || 0),
+            ceIv: Number(data.ce?.iv || data.ce?.implied_volatility || 14.5),
+            peIv: Number(data.pe?.iv || data.pe?.implied_volatility || 14.8),
+            ceBid: Number(data.ce?.top_bid || data.ce?.bid || ceLtp || 0),
+            ceAsk: Number(data.ce?.top_ask || data.ce?.ask || ceLtp || 0),
+            peBid: Number(data.pe?.top_bid || data.pe?.bid || peLtp || 0),
+            peAsk: Number(data.pe?.top_ask || data.pe?.ask || peLtp || 0),
           };
         }
       }

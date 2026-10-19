@@ -12,56 +12,6 @@ import { getAdjustedExpiryDate, formatDateKey, formatDateKeyIST } from '../const
 const NIFTY_LOT_SIZE = 25;
 const NIFTY_STRIKE_STEP = 50;
 const ANCHOR_TARGET_PREMIUM = 62.50;
-const RISK_FREE_RATE = 0.065; // 6.5% RBI repo-based risk-free rate
-const BASE_IV = 0.145; // 14.5% baseline annualized IV for NIFTY
-
-/**
- * Standard Normal Cumulative Distribution Function (Abramowitz & Stegun approximation)
- * Accuracy: ~1e-7
- */
-function normalCdf(x: number): number {
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
-
-  const sign = x < 0 ? -1 : 1;
-  const absX = Math.abs(x) / Math.sqrt(2);
-  const t = 1.0 / (1.0 + p * absX);
-  const erf = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
-  return 0.5 * (1.0 + sign * erf);
-}
-
-/**
- * Black-Scholes analytical option pricing formula
- */
-export function calculateBlackScholesPrice(
-  spot: number,
-  strike: number,
-  tYears: number,
-  type: 'CE' | 'PE',
-  rate = RISK_FREE_RATE,
-  iv = BASE_IV
-): number {
-  if (tYears <= 0.0001) {
-    const intrinsic = type === 'CE' ? Math.max(0, spot - strike) : Math.max(0, strike - spot);
-    return Math.max(0.05, +intrinsic.toFixed(2));
-  }
-
-  const d1 = (Math.log(spot / strike) + (rate + (iv * iv) / 2) * tYears) / (iv * Math.sqrt(tYears));
-  const d2 = d1 - iv * Math.sqrt(tYears);
-
-  let price = 0;
-  if (type === 'CE') {
-    price = spot * normalCdf(d1) - strike * Math.exp(-rate * tYears) * normalCdf(d2);
-  } else {
-    price = strike * Math.exp(-rate * tYears) * normalCdf(-d2) - spot * normalCdf(-d1);
-  }
-
-  return Math.max(0.05, +price.toFixed(2));
-}
 
 /**
  * Computes current active weekly Tuesday expiry date, remaining time, and holiday preponements.
@@ -204,7 +154,21 @@ class NiftyOptionFeedService {
   private cachedAnchor: OobtstDayAnchor | null = null;
   private peakCeLtp: number = 0;
   private peakPeLtp: number = 0;
-  private cachedLiveOptionChain: Record<number, { ceLtp: number; peLtp: number; ceOi: number; peOi: number }> | null = null;
+  private cachedLiveOptionChain: Record<
+    number,
+    {
+      ceLtp: number;
+      peLtp: number;
+      ceOi: number;
+      peOi: number;
+      ceIv?: number;
+      peIv?: number;
+      ceBid?: number;
+      ceAsk?: number;
+      peBid?: number;
+      peAsk?: number;
+    }
+  > | null = null;
   private lastLiveSpot: number | null = null;
   private lastOptionChainSyncTime = 0;
 
@@ -414,6 +378,12 @@ class NiftyOptionFeedService {
       let putLtp = 0;
       let callOi = 0;
       let putOi = 0;
+      let callIvPct = 14.5;
+      let putIvPct = 14.8;
+      let callBid: number | undefined = undefined;
+      let callAsk: number | undefined = undefined;
+      let putBid: number | undefined = undefined;
+      let putAsk: number | undefined = undefined;
 
       if (live) {
         if (live.ceLtp > 0) {
@@ -430,6 +400,12 @@ class NiftyOptionFeedService {
         if (live.peOi !== undefined && live.peOi > 0) {
           putOi = live.peOi;
         }
+        if (live.ceIv) callIvPct = live.ceIv;
+        if (live.peIv) putIvPct = live.peIv;
+        if (live.ceBid) callBid = live.ceBid;
+        if (live.ceAsk) callAsk = live.ceAsk;
+        if (live.peBid) putBid = live.peBid;
+        if (live.peAsk) putAsk = live.peAsk;
       }
 
       totalCallOi += callOi;
@@ -443,12 +419,16 @@ class NiftyOptionFeedService {
         moneyness,
         callSymbol: `NIFTY ${strikePrice} CE`,
         callLtp,
+        callBid,
+        callAsk,
         callOi,
-        callIvPct: 14.5,
+        callIvPct,
         putSymbol: `NIFTY ${strikePrice} PE`,
         putLtp,
+        putBid,
+        putAsk,
         putOi,
-        putIvPct: 14.8,
+        putIvPct,
         isOobtstCe,
         isOobtstPe,
       });
@@ -456,9 +436,9 @@ class NiftyOptionFeedService {
 
     const pcrRatio = totalCallOi > 0 ? +(totalPutOi / totalCallOi).toFixed(2) : 1.0;
     const isLiveMarketData = liveQuoteCount > 0;
-    const dataSource: 'DHAN_LIVE' | 'BLACK_SCHOLES_FALLBACK' = isLiveMarketData
+    const dataSource: 'DHAN_LIVE' | 'OFFLINE' = isLiveMarketData
       ? 'DHAN_LIVE'
-      : 'BLACK_SCHOLES_FALLBACK';
+      : 'OFFLINE';
 
     return {
       underlying: 'NIFTY',
